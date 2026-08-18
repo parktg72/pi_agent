@@ -89,17 +89,31 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
 │   ├── llama-cpu\            CPU 빌드 (진단용, 독립 디렉터리)
 │   └── python\               Python 3.12 임베디드 배포 (.bat이 쓰는 파이썬)
 ├── models\                   GGUF
+├── packages_win\             Python 3.12 오프라인 휠하우스 (Pi/llama-server와 독립)
+│   ├── py312\                 *.whl 155개, win_amd64 cp312 (`--only-binary=:all:`로만 반입)
+│   ├── requirements.txt       사람이 읽는 최상위 목록 (범위 선언)
+│   └── constraints-py312.txt  155개 전체 정확 핀 (진실 출처는 휠셋 — §9 참고)
 ├── home\agent\               PI_CODING_AGENT_DIR — 설정·세션 (가변)
 ├── evidence\                 검증 산출물 (가변)
 ├── start-llama.bat
 ├── start-pi.bat
 ├── verify-offline.bat
+├── install-python-packages.bat  packages_win\ 를 대상 PC 시스템 Python 3.12에 오프라인 설치
 ├── config.env                운영자가 현장에서 채운다 (해시 범위 밖)
 ├── config.env.example
 ├── models.json               Pi 정적 제공자 선언 (§5.1)
 ├── STAGING_MANIFEST.json
 └── README-폐쇄망.md
 ```
+
+`packages_win\`은 통계·생존분석(pandas/lifelines/statsmodels/scikit-learn 등)
+Python 스택이며 llama.cpp/Pi 기동 경로와 완전히 독립적이다 — 어느 쪽을 먼저
+반입하거나 실행해도 서로 영향을 주지 않는다. 패키지 선정 근거와 조사 과정은
+`.superpowers/sdd/2026-08-18-pi-agent-closed-network/python-wheelhouse-research.md`
+에 있다. `install-python-packages.bat`은 번들 내장 임베디드 파이썬(`bin\python\`)
+을 쓰지 않는다 — 그 배포에는 pip이 없다. 대신 대상 PC에 이미 설치된 시스템
+Python 3.12를 `py -3.12` → `python` 순으로 찾는다(다른 `.bat`들의 "번들 내장
+파이썬 우선" 순서와 의도적으로 반대다).
 
 `bin\python\`은 사용자가 대상 PC에 Python 3.12가 있다고 확인해 주었음에도
 넣는다. 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store
@@ -275,7 +289,9 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ## 9. 매니페스트 범위
 
-`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`.
+`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`, `packages_win\`(휠 155개 + `requirements.txt` + `constraints-py312.txt`).
+
+`packages_win\`도 다른 반입물과 같은 이유로 불변이다 — 오프라인 설치는 이 폴더의 휠만 참조하고 `install-python-packages.bat`이 쓰는 것은 `home\agent\`(가변, 위에서 이미 제외)뿐이다. 목록은 이 스펙에 다시 나열하지 않는다 — 진실 출처는 `packages_win\requirements.txt`다.
 
 `home\agent\`와 `evidence\`는 제외한다. 첫 실행 즉시 내용이 바뀌므로 포함하면 무결성 검사가 곧바로 깨진다.
 

@@ -91,3 +91,43 @@
 - `pi install` 로 패키지나 확장을 설치하지 않는다. npm이 필요하고 폐쇄망에서는 동작하지 않는다.
 - 모델을 새로 내려받지 않는다. 반입한 GGUF만 쓴다.
 - `--host` 를 `127.0.0.1` 외의 값으로 바꾸지 않는다.
+
+## Python 오프라인 패키지 설치 (통계·생존분석 스택)
+
+`packages_win\` 는 Pi/llama-server와 무관한 별도 반입물이다 — 의료 데이터
+통계 분석에 쓰는 pandas/lifelines/statsmodels/scikit-learn 등 Python 3.12
+휠 155개(약 337MB)를 담는다. 조사 근거와 목록 선정 이유는
+`.superpowers/sdd/2026-08-18-pi-agent-closed-network/python-wheelhouse-research.md`
+에 있다.
+
+**언제 돌리나**: Pi/llama-server 기동과는 독립적이다. 대상 PC에서 Python으로
+통계 분석 코드를 돌리기 전에, 번들 반입 후 한 번 `win\install-python-packages.bat`
+을 실행한다. 순서는 상관없다 — `start-llama.bat`/`start-pi.bat` 이전이든
+이후든 무방하다.
+
+**무엇이 설치되나**: `packages_win\requirements.txt`(범위 선언, 사람이 읽는
+목록)와 `packages_win\constraints-py312.txt`(155개 전체 정확 핀)를 함께 써서
+`packages_win\py312\`의 오프라인 휠만으로 설치한다. 패키지 전체 목록은
+`packages_win\requirements.txt`를 보라 — 여기 다시 나열하지 않는다.
+
+```
+win\install-python-packages.bat        (대상 PC의 시스템 Python 3.12, --user 설치)
+win\install-python-packages.bat venv   (번들 루트에 .venv 를 만들어 격리 설치)
+```
+
+이 스크립트는 번들 내장 임베디드 파이썬(`bin\python\python.exe`, pip 없음)을
+쓰지 않는다 — **대상 PC에 이미 설치된 시스템 Python 3.12**가 있어야 한다.
+`py -3.12`를 먼저 찾고, 없으면 `python`을 쓰고, 둘 다 없으면 명확히 실패한다
+(`config.env`의 `PYTHON_CMD`로 경로를 직접 지정할 수도 있다 - 다른 `.bat`과
+같은 변수를 공유한다).
+
+`--no-index --find-links packages_win\py312 --constraint packages_win\constraints-py312.txt`
+로만 설치하므로 네트워크로 새지 않는다.
+
+**실패 시 볼 곳**: 종료 코드가 아니라 `evidence\` 의 두 파일이 판정 기준이다.
+- `evidence\python-packages-install.txt` — pip 설치 로그 전체. 마지막 줄이
+  `Successfully installed`로 끝나는지 확인한다.
+- `evidence\python-packages-check.txt` — `pandas, numpy, lifelines,
+  statsmodels, sklearn` 임포트 결과. `IMPORT_OK` 로 시작하고 다섯 개 버전이
+  다 찍혀 있어야 한다. 비어 있거나 `Traceback`이 보이면 설치가 끝나지 않은
+  것이다 — 위 install 로그에서 어느 패키지가 실패했는지 먼저 본다.

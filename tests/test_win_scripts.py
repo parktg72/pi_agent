@@ -57,7 +57,7 @@ def test_start_pi_waits_for_the_model_before_launching():
 
 
 def test_batch_files_resolve_python_before_using_it():
-    for name in ("start-pi.bat", "verify-offline.bat"):
+    for name in ("start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert "PYTHON_CMD" in body, name
         assert "py -3.12" in body, name
@@ -125,7 +125,7 @@ def test_batch_files_pin_the_console_codepage_to_the_file_encoding():
     # 파일은 CP949로 저장한다(SCRIPT_ENCODING 주석 참조). 콘솔 코드페이지가
     # 그와 다르면 한글 echo가 깨지므로 chcp 949를 @echo off 바로 다음,
     # setlocal보다 앞에 둔다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert "chcp 949" in body, name
         assert "chcp 65001" not in body, name
@@ -138,7 +138,7 @@ def test_batch_files_pin_the_console_codepage_to_the_file_encoding():
 def test_python_callers_pin_the_output_encoding_to_the_console_codepage():
     # 콘솔이 CP949이므로 파이썬 출력도 CP949로 고정한다. utf-8로 두면 한글
     # 진행 메시지와 evidence\\manifest-check.txt가 깨진다.
-    for name in ("start-pi.bat", "verify-offline.bat"):
+    for name in ("start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert "PYTHONIOENCODING=cp949" in body, name
         index_pin = body.index("PYTHONIOENCODING=cp949")
@@ -148,7 +148,7 @@ def test_python_callers_pin_the_output_encoding_to_the_console_codepage():
 
 def test_batch_files_carry_no_byte_order_mark():
     # BOM은 cmd.exe에서 @echo off를 포함한 첫 줄을 깨뜨린다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         assert not raw.startswith(b"\xef\xbb\xbf"), name
 
@@ -159,14 +159,14 @@ def test_batch_files_use_crlf_line_endings():
     # 2026-08-18 윈도우 실측: LF 판 start-llama.bat은 config.env 호출과 echo가
     # 전부 깨졌고("'?라'은(는) 내부 또는 외부 명령이 아닙니다"), 바이트만 CRLF로
     # 바꾼 같은 파일은 정상 동작했다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         assert b"\n" in raw, name
         assert raw.replace(b"\r\n", b"") .count(b"\n") == 0, f"{name}에 CR 없는 LF 줄이 있다"
 
 
 def test_batch_files_that_carry_hangul_must_be_crlf_and_single_byte_safe():
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         raw.decode(SCRIPT_ENCODING)  # 선언한 인코딩으로 읽히지 않으면 여기서 터진다
         for number, line in enumerate(raw.split(b"\r\n"), start=1):
@@ -192,7 +192,7 @@ def test_no_batch_file_passes_a_trailing_backslash_root_to_a_program():
     #   --root "C:\\pi_agent\\."  -> ARGV: ['--root', 'C:\\pi_agent\\.']  (정상)
     # %~dp0는 항상 역슬래시로 끝나므로 "%ROOT%"를 그대로 넘기면 닫는 따옴표가
     # 이스케이프되어 argv가 깨진다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert '--root "%ROOT%"' not in body, name
         for line in _external_invocation_lines(body):
@@ -236,7 +236,7 @@ def test_verify_offline_refuses_to_run_without_the_model_identifiers():
 def test_batch_files_that_still_need_the_bundle_root_move_there_first():
     # cd가 없으면 상대 경로가 호출 시점의 cwd 기준으로 풀린다.
     # start-pi.bat은 여기서 제외한다 - 아래 test_start_pi_does_not_change_directory 참고.
-    for name in ("start-llama.bat", "verify-offline.bat"):
+    for name in ("start-llama.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert 'cd /d "%ROOT%"' in body, name
         assert body.index('cd /d "%ROOT%"') < body.index("call :load_config"), name
@@ -367,7 +367,7 @@ def test_config_env_is_loaded_through_an_executable_copy():
     # cmd의 call은 .bat/.cmd 확장자만 배치로 실행한다. `call "...\config.env"`는
     # 아무 일도 하지 않고 errorlevel 0으로 돌아온다(2026-08-18 윈도우 실측:
     # config.env의 모든 set이 무시되어 MODEL_ALIAS가 끝내 비어 있었다).
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert 'call "%ROOT%config.env"' not in body, name
         assert "call :load_config" in body, name
@@ -376,7 +376,7 @@ def test_config_env_is_loaded_through_an_executable_copy():
 
 
 def test_config_files_are_stored_in_the_declared_script_encoding():
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         raw.decode(SCRIPT_ENCODING)
         if any(byte > 0x7F for byte in raw):
@@ -404,3 +404,85 @@ def test_llama_base_url_is_cleared_before_launching_pi():
         index_clear = body.index('set "LLAMA_BASE_URL="')
         index_pi_launch = body.rindex("bin\\pi\\pi.exe")
         assert index_clear < index_pi_launch, name
+
+
+# --- 파이썬 오프라인 휠하우스 설치 스크립트 (packages_win\) ---
+
+def test_install_python_packages_blocks_the_network_and_pins_versions():
+    # --no-index가 없으면 pip이 PyPI로 새고, --constraint가 없으면 다중 버전이
+    # 공존하는 휠셋(packages_win\py312)에서 어느 버전이 뽑힐지 결정론적이지 않다.
+    body = read("install-python-packages.bat")
+    assert "--no-index" in body
+    assert "--find-links" in body
+    assert "--constraint" in body
+    assert "packages_win\\py312" in body
+    assert "packages_win\\constraints-py312.txt" in body
+    assert "packages_win\\requirements.txt" in body
+
+
+def test_install_python_packages_never_reaches_an_index():
+    # --index-url 자체가 없어야 하고, "pip install"이 나오는 모든 줄에는
+    # --no-index가 같은 줄에 있어야 한다 - 두 번째 pip 호출을 누가 추가하면서
+    # --no-index를 빠뜨리는 회귀를 잡는다.
+    body = read("install-python-packages.bat")
+    assert "--index-url" not in body
+    assert "-i http" not in body
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("rem "):
+            continue
+        if "pip install" in stripped.lower():
+            assert "--no-index" in stripped, stripped
+
+
+def test_install_python_packages_defaults_to_user_scope_and_documents_venv():
+    body = read("install-python-packages.bat")
+    assert '"INSTALL_SCOPE=--user"' in body
+    assert ".venv" in body, "격리하고 싶을 때 쓸 venv 경로가 안내돼 있어야 한다"
+
+
+def test_install_python_packages_writes_evidence_not_just_an_exit_code():
+    # 이 번들의 규칙: 성공 기준은 종료 코드가 아니라 evidence\\에 남은 증거다.
+    body = read("install-python-packages.bat")
+    assert "evidence" in body
+    assert "python-packages-install.txt" in body
+    assert "python-packages-check.txt" in body
+
+
+def test_install_python_packages_verifies_the_core_import_set():
+    body = read("install-python-packages.bat")
+    for module in ("pandas", "numpy", "lifelines", "statsmodels", "sklearn"):
+        assert module in body, module
+    assert "-c \"import pandas, numpy, lifelines, statsmodels, sklearn" in body
+
+
+def test_install_python_packages_targets_system_python_not_the_embedded_one():
+    # 임베디드 배포(bin\\python\\python.exe)에는 pip이 없다 - 다른 .bat들과
+    # 달리 이 스크립트는 그 경로를 절대 먼저 확인하지 않는다. 대신 py -3.12를
+    # 우선하고 python으로 폴백한다.
+    body = read("install-python-packages.bat")
+    assert 'if not exist "%ROOT%bin\\python\\python.exe" goto :resolve_python_system' not in body
+    assert 'set "PYTHON_CMD="%ROOT%bin\\python\\python.exe""' not in body
+    index_py_launcher = body.index("py -3.12")
+    index_bare_python = body.index("python -c")
+    assert index_py_launcher < index_bare_python
+
+
+def test_install_python_packages_user_supplied_python_cmd_still_wins():
+    body = read("install-python-packages.bat")
+    index_user = body.index("if defined PYTHON_CMD goto :eof")
+    index_py_launcher = body.index("py -3.12")
+    assert index_user < index_py_launcher
+
+
+def test_install_python_packages_fails_closed_without_a_python():
+    body = read("install-python-packages.bat")
+    assert "[FAIL]" in body
+    assert "exit /b 1" in body
+
+
+def test_install_python_packages_refuses_to_run_without_the_wheelhouse():
+    body = read("install-python-packages.bat")
+    assert 'if not exist "%PKG_DIR%"' in body
+    assert 'if not exist "%CONSTRAINT%"' in body
+    assert 'if not exist "%REQUIREMENTS%"' in body
