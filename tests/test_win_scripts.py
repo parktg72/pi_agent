@@ -435,10 +435,35 @@ def test_install_python_packages_never_reaches_an_index():
             assert "--no-index" in stripped, stripped
 
 
-def test_install_python_packages_defaults_to_user_scope_and_documents_venv():
+def test_install_python_packages_defaults_to_an_isolated_venv():
+    # 기본값이 --user였을 때는 %APPDATA%\\Python\\Python312\\site-packages 에
+    # numpy/pandas를 심어 그 사용자의 모든 Python 3.12 실행에 영향을 줬다.
+    # 사내 스크립트가 numpy<2를 쓰고 있으면 즉시 깨지고 되돌리는 절차도 없다.
+    # 그래서 격리가 기본이고, 전역을 바꾸는 쪽을 인자로 명시하게 한다.
     body = read("install-python-packages.bat")
-    assert '"INSTALL_SCOPE=--user"' in body
-    assert ".venv" in body, "격리하고 싶을 때 쓸 venv 경로가 안내돼 있어야 한다"
+    assert 'set "USE_VENV=1"' in body, "기본값이 격리 설치여야 한다"
+    assert 'set "VENV_DIR=%ROOT%.venv"' in body
+    assert 'if /I "%~1"=="--user" set "USE_VENV=0"' in body, "--user는 인자로 명시할 때만 쓰인다"
+    # 무인자 경로에서 --user가 켜지는 곳이 없어야 한다: INSTALL_SCOPE에 --user를
+    # 넣는 줄은 --user 분기(:scope_user) 안에만 있다.
+    scope_user = body[body.index("\n:scope_user\n") : body.index("\n:scope_done\n")]
+    assert 'set "INSTALL_SCOPE=--user"' in scope_user
+    assert body.count('set "INSTALL_SCOPE=--user"') == 1
+    assert body.index('set "INSTALL_SCOPE="') < body.index("\n:scope_user\n")
+
+
+def test_install_python_packages_warns_that_user_scope_changes_the_global_python():
+    # --user를 고른 운영자는 무엇을 감수하는지 콘솔에서 읽을 수 있어야 한다.
+    body = read("install-python-packages.bat")
+    scope_user = body[body.index("\n:scope_user\n") : body.index("\n:scope_done\n")]
+    assert "[warn]" in scope_user
+    assert "site-packages" in scope_user
+    assert "Python312" in scope_user, "어느 경로가 바뀌는지 말해야 한다"
+
+
+def test_install_python_packages_suppresses_the_script_location_noise():
+    body = read("install-python-packages.bat")
+    assert "--no-warn-script-location" in body
 
 
 def test_install_python_packages_writes_evidence_not_just_an_exit_code():
@@ -449,11 +474,18 @@ def test_install_python_packages_writes_evidence_not_just_an_exit_code():
     assert "python-packages-check.txt" in body
 
 
-def test_install_python_packages_verifies_the_core_import_set():
+def test_install_python_packages_verifies_every_direct_dependency_not_just_five():
+    # 다섯 개를 한 줄로 묶어 임포트하던 이전 방식은 lightgbm·catboost·shap·
+    # pyarrow·pyreadstat·seaborn·sksurv가 깨져 있어도 증거가 초록이었다.
+    # 이제 requirements.txt의 직접 의존 전부를 하나씩 임포트한다.
     body = read("install-python-packages.bat")
-    for module in ("pandas", "numpy", "lifelines", "statsmodels", "sklearn"):
-        assert module in body, module
-    assert "-c \"import pandas, numpy, lifelines, statsmodels, sklearn" in body
+    assert "-c \"import pandas, numpy, lifelines, statsmodels, sklearn" not in body
+    assert "tools\\check_imports.py" in body
+    assert '--requirements "%REQUIREMENTS%"' in body
+    assert "python-packages-check.txt" in body
+    index_check = body.index("check_imports.py")
+    index_evidence = body.index('"%EV%\\python-packages-check.txt"')
+    assert index_check < index_evidence, "임포트 결과가 증거 파일로 가야 한다"
 
 
 def test_install_python_packages_targets_system_python_not_the_embedded_one():
@@ -468,17 +500,55 @@ def test_install_python_packages_targets_system_python_not_the_embedded_one():
     assert index_py_launcher < index_bare_python
 
 
-def test_install_python_packages_user_supplied_python_cmd_still_wins():
+def test_install_python_packages_validates_even_a_user_supplied_python_cmd():
+    # 예전에는 :resolve_python이 "if defined PYTHON_CMD goto :eof"로 시작해서
+    # config.env 값이 무조건 이겼다. 그런데 config.env.example과 README는
+    # "비워두면 번들 내장 bin\\python\\python.exe를 먼저 쓴다"고 안내했으므로,
+    # 그 안내대로 임베디드 파이썬 경로를 적은 운영자는 pip이 없는 파이썬으로
+    # 설치를 시도하게 됐다. 지정된 것도 검사를 통과해야 이긴다.
     body = read("install-python-packages.bat")
-    index_user = body.index("if defined PYTHON_CMD goto :eof")
-    index_py_launcher = body.index("py -3.12")
-    assert index_user < index_py_launcher
+    assert "if defined PYTHON_CMD goto :eof" not in body, "지정값이 검사를 건너뛰면 안 된다"
+    assert "if defined PYTHON_CMD goto :resolve_python_configured" in body
+    index_configured = body.index("\n:resolve_python_configured\n")
+    index_validate_call = body.index("\n:resolve_python_validate\n")
+    assert index_configured < index_validate_call
+    # 지정 경로도 자동 탐색 경로도 같은 검사로 수렴한다.
+    resolve = body[body.index("\n:resolve_python\n") :]
+    assert resolve.count("goto :resolve_python_validate") == 3
+
+
+def test_install_python_packages_requires_python_312_with_pip():
+    # (a) cp312 휠 155개는 3.13에서 전부 "not a supported wheel"로 실패하는데
+    #     예전 폴백은 "import sys"만 보고 통과시킨 뒤 "3.12를 찾지 못했다"고
+    #     엉뚱한 메시지를 냈다. (b) 임베디드 배포에는 pip이 없다.
+    body = read("install-python-packages.bat")
+    validate = body[body.index("\n:validate_python\n") : body.index("\n:resolve_python\n")]
+    assert "sys.version_info[:2] == (3, 12)" in validate
+    assert "import pip" in validate
+    assert validate.count("exit /b 1") == 3, "세 실패 각각이 따로 종료해야 한다"
+    assert "Python 3.12가 아니다" in validate
+    assert "pip이 없다" in validate
+    assert "print(sys.version)" in validate, "무엇이 잡혔는지 실제 버전을 보여야 한다"
+    # venv 파이썬도 같은 검사를 통과해야 한다.
+    assert body.count("call :validate_python") == 2
 
 
 def test_install_python_packages_fails_closed_without_a_python():
+    # 이전 판은 파일 어딘가에 [FAIL]과 exit /b 1이 있는지만 봐서 이 저장소의
+    # 거의 모든 .bat이 통과했다. 파이썬 탐색이 실패하는 그 경로를 직접 본다.
     body = read("install-python-packages.bat")
-    assert "[FAIL]" in body
-    assert "exit /b 1" in body
+    resolve = body[body.index("\n:resolve_python\n") : body.index("\n:resolve_python_configured\n")]
+    lines = [line.strip() for line in resolve.splitlines() if line.strip()]
+    # py -3.12 도 python 도 안 되면 곧바로 실패해야 한다: 두 폴백 뒤에 남는
+    # 것은 [FAIL] 안내와 exit /b 1 뿐이고, 그 사이에 성공 경로가 없어야 한다.
+    tail = lines[lines.index("python -c \"import sys\" >nul 2>&1") :]
+    assert any(line.startswith("echo [FAIL]") for line in tail)
+    assert tail[-1] == "exit /b 1", tail[-1]
+    assert 'set "PYTHON_CMD=' not in "\n".join(tail[tail.index("exit /b 1") :])
+    # 호출부가 그 실패를 삼키지 않아야 한다.
+    assert "call :resolve_python" in body
+    index_call = body.index("call :resolve_python")
+    assert "if errorlevel 1 exit /b 4" in body[index_call : index_call + 120]
 
 
 def test_install_python_packages_refuses_to_run_without_the_wheelhouse():
@@ -526,37 +596,98 @@ def _sync_packages_subroutine_body(body: str) -> str:
     # 호출부에도 부분 문자열로 나타나므로, 레이블 정의 자체(줄 앞)를 앵커로
     # 삼는다. ":load_config"도 같은 이유로 "call :load_config"가 파일 맨
     # 앞에 먼저 나온다.
-    sync_start = body.index("\n:sync_packages\n")
-    load_config_label = body.index("\n:load_config\n")
-    assert sync_start < load_config_label, "sync_packages 서브루틴이 load_config보다 먼저 정의돼야 한다"
-    return body[sync_start:load_config_label]
+    # (이전 판은 여기서 "sync_packages가 load_config보다 먼저 정의돼야 한다"고
+    #  단언했다. 배치의 서브루틴 정의 순서는 동작과 무관하다 - 앵커를 고르는
+    #  방법일 뿐인데 요구사항처럼 읽혀서 지웠다.)
+    return body[body.index("\n:sync_packages\n") : body.index("\n:load_config\n")]
+
+
+def _xcopy_lines(sync_body: str) -> list[str]:
+    lines = [line.strip() for line in sync_body.splitlines()]
+    return [line for line in lines if line.lower().startswith("xcopy ")]
 
 
 def test_pi_package_sync_destination_is_never_a_hardcoded_absolute_path():
-    # 동기화 대상은 %ROOT%/%PI_CODING_AGENT_DIR% 기반이어야 한다 - C:\... 같은
-    # 이 머신 전용 절대 경로가 박히면 다른 배치 위치(C:\pi_agent)에서 깨진다.
-    sync_body = _sync_packages_subroutine_body(read("start-pi.bat"))
-    assert "C:\\" not in sync_body
-    assert "%ROOT%pi-packages" in sync_body
-    assert "%PI_CODING_AGENT_DIR%" in sync_body
+    # 동기화 대상은 %ROOT%/%PI_CODING_AGENT_DIR% 기반이어야 한다 - 이 머신
+    # 전용 절대 경로가 박히면 다른 배치 위치에서 깨진다. C:\ 만 막으면
+    # D:\ 로 적은 경로와 UNC(\\server\share)가 그대로 통과한다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        sync_body = _sync_packages_subroutine_body(read(name))
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            assert f"{letter}:\\" not in sync_body.upper(), f"{name}: {letter}:\\"
+        assert "\\\\" not in sync_body, f"{name}: UNC 경로"
+        assert "%ROOT%pi-packages" in sync_body
+        assert "%PI_CODING_AGENT_DIR%" in sync_body
 
 
-def test_pi_package_sync_uses_xcopy_update_flag_not_a_hand_rolled_diff():
+def test_pi_package_sync_uses_xcopy_update_flag_on_every_call():
     # "이미 최신이면 매번 전량 복사하지 않는다"는 요구를 xcopy /D 하나로
     # 충족한다 - 파일 단위 비교 로직을 이 배치에 새로 만들지 않는다.
-    sync_body = _sync_packages_subroutine_body(read("start-pi.bat"))
-    assert " /D " in sync_body
-    # git 클론의 .git은 윈도우에서 숨김(Hidden) 속성이 붙는다(2026-08-18 실측) -
-    # /H가 없으면 xcopy가 통째로 건너뛴다.
-    assert " /H " in sync_body
+    # 서브루틴 전체에서 플래그를 한 번만 찾으면 두 번째 xcopy에 /D를
+    # 빠뜨려도 통과한다. 호출마다 줄 단위로 본다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        calls = _xcopy_lines(_sync_packages_subroutine_body(read(name)))
+        assert len(calls) == 2, f"{name}: {calls}"
+        for call in calls:
+            assert " /D " in call or call.endswith(" /D"), f"{name}: {call}"
+            # git 클론의 .git은 윈도우에서 숨김(Hidden) 속성이 붙는다
+            # (2026-08-18 실측) - /H가 없으면 xcopy가 통째로 건너뛴다.
+            assert " /H " in call or call.endswith(" /H"), f"{name}: {call}"
+            assert " /E " in call or call.endswith(" /E"), f"{name}: {call}"
+
+
+def test_pi_package_sync_survives_a_locked_destination_that_already_has_packages():
+    # xcopy 실패에 무조건 exit /b 7이면 다른 Pi 세션이 파일을 잠그는 순간
+    # 두 번째 기동이 아예 안 된다. 이미 패키지가 있으면 경고 후 계속하고,
+    # 대상이 비어 있을 때만 실패한다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        sync_body = _sync_packages_subroutine_body(read(name))
+        assert 'if exist "%PI_CODING_AGENT_DIR%\\npm\\node_modules"' in sync_body, name
+        assert 'if exist "%PI_CODING_AGENT_DIR%\\git\\github.com"' in sync_body, name
+        assert sync_body.count("[warn]") >= 2, name
+        # 실패로 끝나는 길도 여전히 남아 있어야 한다(대상이 비었을 때).
+        assert sync_body.count("[FAIL]") >= 2, name
 
 
 def test_pi_package_sync_seeds_settings_json_only_when_absent():
     # settings.json은 사용자가 /trust, /settings로 직접 고칠 수 있는 파일이라
     # models.json처럼 매번 덮어쓰면 사용자 설정이 날아간다 - 없을 때만 심는다.
-    body = read("start-pi.bat")
-    assert 'if exist "%PI_CODING_AGENT_DIR%\\settings.json" goto :eof' in body
-    assert 'copy /y "%ROOT%pi-packages\\settings.packages.json" "%PI_CODING_AGENT_DIR%\\settings.json"' in body
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert 'if exist "%PI_CODING_AGENT_DIR%\\settings.json" goto :sync_packages_compare' in body, name
+        assert 'copy /y "%ROOT%pi-packages\\settings.packages.json" "%PI_CODING_AGENT_DIR%\\settings.json"' in body, name
+        # 심는 copy는 한 번뿐이고, 그 앞에 "없을 때만"이라는 관문이 있다.
+        index_guard = body.index('if exist "%PI_CODING_AGENT_DIR%\\settings.json" goto :sync_packages_compare')
+        index_copy = body.index('copy /y "%ROOT%pi-packages\\settings.packages.json"')
+        assert index_guard < index_copy, name
+
+
+def test_pi_package_sync_warns_when_the_installed_package_list_drifted():
+    # 갱신 경로에 감지 수단이 없던 문제: v2 번들이 패키지를 추가해도 기존
+    # settings.json이 있으면 조용히 미등록되고, xcopy /D는 상류에서 삭제된
+    # 파일을 지우지 않는다. 경고만 하고 덮어쓰지는 않는다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        sync_body = _sync_packages_subroutine_body(read(name))
+        assert "tools\\packages_diff.py" in sync_body, name
+        assert '--bundled "%ROOT%pi-packages\\settings.packages.json"' in sync_body, name
+        assert '--installed "%PI_CODING_AGENT_DIR%\\settings.json"' in sync_body, name
+        # 대조는 이미 있는 settings.json에만 한다 - 심는 경로가 아니다.
+        compare = sync_body[sync_body.index("\n:sync_packages_compare\n") :]
+        assert "packages_diff.py" in compare, name
+        assert "copy /y" not in compare, f"{name}: 대조가 덮어쓰기로 번지면 안 된다"
+
+
+def test_verify_offline_proves_the_extensions_actually_loaded():
+    # 확장 4종이 붙었다는 산출물이 이 번들의 증거 체계에 하나도 없었다 -
+    # 리허설 §5-2의 수기 확인은 evidence\에 남지 않는다.
+    body = read("verify-offline.bat")
+    assert "call :sync_packages" in body
+    assert '"%ROOT%bin\\pi\\pi.exe" list > "%EV%\\pi-packages.txt"' in body
+    index_sync = body.index("call :sync_packages")
+    index_list = body.index('pi.exe" list')
+    assert index_sync < index_list, "동기화가 목록 확인보다 먼저여야 한다"
+    # 요약 안내도 그 파일을 가리켜야 운영자가 무엇을 볼지 안다.
+    assert "pi-packages.txt" in body[body.index("확인할 것") :]
 
 
 def test_pi_packages_settings_template_declares_the_four_required_packages():
@@ -574,3 +705,73 @@ def test_pi_packages_settings_template_declares_the_four_required_packages():
         "npm:@juicesharp/rpiv-todo@2.6.1",
         "npm:@juicesharp/rpiv-ask-user-question@2.6.1",
     ]
+
+
+def test_bundled_and_staged_package_settings_never_diverge():
+    # 정본은 win\settings.packages.json, 배치본은 pi-packages\settings.packages.json
+    # 이고 start-pi.bat이 심는 것은 배치본이다. 둘이 어긋나면 리뷰한 목록과
+    # 실제로 등록되는 목록이 달라지는데, 지금까지 그것을 보는 눈이 없었다.
+    # 배치본은 gitignore 대상이라(상류 배포물) fresh checkout에는 없다.
+    import json
+
+    import pytest
+
+    staged = WIN.parent / "pi-packages" / "settings.packages.json"
+    if not staged.exists():
+        pytest.skip("pi-packages\\는 gitignore 대상이라 스테이징한 머신에만 있다")
+    canonical = json.loads((WIN / "settings.packages.json").read_text(encoding="utf-8"))
+    assert json.loads(staged.read_text(encoding="utf-8")) == canonical
+
+
+def test_install_python_packages_places_the_vc_runtime_lightgbm_needs():
+    # lightgbm 휠은 lib_lightgbm.dll이 요구하는 VCOMP140.DLL/MSVCP140.dll을
+    # 벤더링하지 않는다(scikit-learn은 sklearn\.libs\에 자체 동봉해 무사하다).
+    # 번들의 VC 런타임 3종은 bin\llama-*\ 안 app-local이라 파이썬 프로세스의
+    # 검색 경로에 없다.
+    body = read("install-python-packages.bat")
+    assert 'set "VCRUNTIME_DIR=%ROOT%packages_win\\vcruntime"' in body
+    place = body[body.index("\n:place_vcruntime\n") : body.index("\n:validate_python\n")]
+    assert "VCOMP140.DLL" in place
+    assert "MSVCP140.dll" in place
+    # 설치 위치는 venv/--user에 따라 다르므로 파이썬에게 묻는다. 이때 임포트로
+    # 물으면 안 된다 - DLL이 아직 없어서 import lightgbm 자체가 실패한다.
+    assert "find_spec" in place
+    executable = "\n".join(
+        line for line in place.splitlines() if not line.strip().lower().startswith("rem ")
+    )
+    assert "import lightgbm" not in executable
+    assert '"%LGB_DIR%\\bin\\"' in place
+    # 실패해도 설치 전체를 멈추지 않되, 조용히 넘어가지도 않는다.
+    assert "[warn]" in place
+    assert "exit /b" not in place
+    index_place = body.index("call :place_vcruntime")
+    index_check = body.index("check_imports.py")
+    assert index_place < index_check, "DLL 배치가 임포트 검증보다 먼저여야 한다"
+
+
+def test_vc_runtime_for_lightgbm_is_actually_staged():
+    import pytest
+
+    vcruntime = WIN.parent / "packages_win" / "vcruntime"
+    if not vcruntime.exists():
+        pytest.skip("packages_win\\vcruntime\\은 gitignore 대상이라 스테이징한 머신에만 있다")
+    names = {path.name.lower() for path in vcruntime.iterdir()}
+    assert "vcomp140.dll" in names
+    assert "msvcp140.dll" in names
+
+
+def test_readme_points_at_the_bundle_root_not_the_win_directory():
+    # win\ 은 매니페스트 EXCLUDED_ROOTS라 반입된 PC에 그 디렉터리가 없을 수
+    # 있다. 다른 .bat은 전부 루트 기준으로 안내하는데 이 하나만 win\ 기준이었다.
+    readme = (WIN / "README-폐쇄망.md").read_text(encoding="utf-8")
+    assert "win\\install-python-packages.bat" not in readme
+    assert "install-python-packages.bat" in readme
+
+
+def test_readme_documents_the_isolated_default_and_what_user_scope_costs():
+    readme = (WIN / "README-폐쇄망.md").read_text(encoding="utf-8")
+    assert ".venv" in readme
+    assert "--user" in readme
+    # --user를 쓸 때 무엇을 감수하는지, 실행 파일이 어디 놓이는지.
+    assert "Python312\\Scripts" in readme
+    assert "site-packages" in readme
