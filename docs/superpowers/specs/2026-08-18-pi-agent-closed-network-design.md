@@ -86,16 +86,25 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
 │   ├── pi\                   pi-windows-x64.zip 해제 (pi.exe 등)
 │   ├── llama-cuda\           CUDA 12.4 zip + cudart 12.4 zip + VC++ DLL 3종
 │   ├── llama-vulkan\         Vulkan 빌드 (폴백, 독립 디렉터리)
-│   └── llama-cpu\            CPU 빌드 (진단용, 독립 디렉터리)
+│   ├── llama-cpu\            CPU 빌드 (진단용, 독립 디렉터리)
+│   └── python\               Python 3.12 임베디드 배포 (.bat이 쓰는 파이썬)
 ├── models\                   GGUF
 ├── home\agent\               PI_CODING_AGENT_DIR — 설정·세션 (가변)
 ├── evidence\                 검증 산출물 (가변)
 ├── start-llama.bat
 ├── start-pi.bat
 ├── verify-offline.bat
+├── config.env                운영자가 현장에서 채운다 (해시 범위 밖)
+├── config.env.example
+├── models.json               Pi 정적 제공자 선언 (§5.1)
 ├── STAGING_MANIFEST.json
 └── README-폐쇄망.md
 ```
+
+`bin\python\`은 사용자가 대상 PC에 Python 3.12가 있다고 확인해 주었음에도
+넣는다. 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store
+앱 실행 별칭 스텁이 잡히면 복구가 불가능하기 때문이다 — `.bat`은 `PYTHON_CMD`
+→ 번들 내장 → `py -3.12` → `python` 순으로 찾는다.
 
 백엔드 DLL을 섞지 않기 위해 세 런타임은 **각각 독립 디렉터리**를 유지한다. 한 폴더에 합치면 어느 백엔드가 로드됐는지 확정할 수 없다.
 
@@ -109,13 +118,50 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
      -ngl 999 -c 32768 --parallel 1 -sm layer -ts <실측값>
 2. readiness 폴링 — 서버가 응답할 때까지 대기 (무한 대기 금지, 타임아웃과 실패 종료)
 3. /v1/models 조회 — <고정-모델-ID>가 나타나는지 확인. 없으면 중단.
-4. Pi 기동 — 동일한 모델 ID와 LLAMA_BASE_URL 사용
-5. 툴 왕복 스모크 테스트 — 실제 파일 읽기 1회를 왕복으로 확인
+4. 정적 제공자 선언 배치 — 번들 루트의 models.json을 PI_CODING_AGENT_DIR로
+   복사한다. 이것이 있어야 Pi가 이 엔드포인트를 하나의 제공자로 인식한다.
+5. Pi 기동 — --model <제공자>/<고정-모델-ID> 와 LLAMA_BASE_URL 사용
+6. 툴 왕복 스모크 테스트 — 실제 파일 읽기 1회를 왕복으로 확인
 ```
 
-`--models-dir` 라우터 모드는 선택지로 남기되 기본값이 아니다. 라우터를 쓰려면 명시적 load API 호출, 동시 적재 한도, 백업 모델 전환 절차까지 `.bat`에 고정해야 한다.
+### 5.1 왜 라우터 모드를 쓰지 않고 정적 제공자를 선언하는가
 
-Pi 쪽 연결은 환경변수(`LLAMA_BASE_URL`, 필요 시 `LLAMA_API_KEY`)로 세팅하여 대화형 `/login` 단계를 제거한다.
+`pi.exe`에 내장된 llama.cpp 제공자는 **라우터 모드를 요구한다.** 근거 두 가지:
+
+- 바이너리에 `throw new Error("Server is not running in llama.cpp router mode")` 문자열이 있다.
+- 같이 실린 `bin\pi\docs\llama-cpp.md`가 "Start `llama-server` without `--model` or `-m`. Passing a model starts single-model mode instead of router mode."라고 못 박고, 문제 해결 절에도 "**Server is not in router mode:** Start it without `--model`, `-m`, or `-hf`."가 있다.
+
+그런데 위 1번은 `-m`으로 단일 모델 모드를 띄운다. 그래서 관문 ①②(서버 기동, `/v1/models`에 alias 노출)는 통과하고 관문 ③(툴 왕복)에서 죽는다.
+
+**라우터 모드로 바꾸지 않는다.** 무인 기동의 결정성이 이 절의 핵심이고, 라우터로 가면 명시적 load API 호출·동시 적재 한도·전환 절차가 `.bat`에 들어와야 하며 §6의 mmproj 평면 배치 결정과도 충돌한다(라우터는 멀티모달 모델을 하위 디렉터리에 두라고 요구한다).
+
+대신 **정적 제공자 선언**으로 푼다. Pi는 `PI_CODING_AGENT_DIR\models.json`에서 사용자 정의 제공자를 읽는다(`bin\pi\docs\models.md`). 번들 루트에 다음을 두고, `start-pi.bat`·`verify-offline.bat`이 실행할 때마다 `PI_CODING_AGENT_DIR`로 덮어쓴다.
+
+```json
+{"providers":{"local":{"baseUrl":"http://127.0.0.1:8080/v1","api":"openai-completions",
+ "apiKey":"local","compat":{"supportsDeveloperRole":false,"supportsReasoningEffort":false},
+ "models":[{"id":"qwen3.8-27b", ...}]}}}
+```
+
+- 원본은 **번들 루트**에 둔다. `home\agent\`는 가변 영역이라 해시되지 않으므로 원본이 거기 있으면 매니페스트가 지켜 주지 못한다. 매번 덮어쓰므로 설정은 항상 검증된 원본에서 나온다.
+- `compat`의 두 플래그를 끄는 이유는 상류 문서가 Ollama/vLLM 같은 OpenAI 호환 서버에 대해 명시하기 때문이다(`developer` 역할 대신 `system`, `reasoning_effort` 미전송).
+- `apiKey`는 더미 값이다. 키 없는 로컬 서버라도 값이 있어야 모델이 `/model`과 `--list-models`에 나타난다.
+- Pi에 넘기는 모델 ID는 제공자 한정 형식 `local/qwen3.8-27b`이다(`--model`은 `provider/id`를 받는다 — `bin\pi\docs\usage.md`). 뒷부분은 `llama-server`의 `--alias`와 **글자 그대로 같아야 한다.**
+- `models.json`은 정적 파일이라 환경변수를 읽지 않는다. `LLAMA_PORT`를 바꾸면 `baseUrl`의 포트도 같이 바꿔야 한다.
+- readiness 폴링이 보는 엔드포인트는 그대로 `/v1/models`다. 단일 모델 모드에서 정상 응답하며, 거기 나타나는 이름은 제공자 접두사 없는 `--alias` 값이다.
+
+**이 연결 방식은 리허설에서 처음 검증된다.** 위 근거는 모두 바이너리 문자열과 동봉 문서에서 확인한 것이고, 정적 제공자 선언이 이 Pi 빌드에서 실제로 툴 왕복까지 완주하는지는 윈도우에서 `pi.exe`를 돌려봐야만 안다.
+
+Pi 쪽 연결은 환경변수(`LLAMA_BASE_URL`, 필요 시 `LLAMA_API_KEY`)와 위 `models.json`으로 세팅하여 대화형 `/login` 단계를 제거한다.
+
+### 5.2 실행 스크립트가 만족해야 하는 윈도우 제약 (2026-08-18 실측)
+
+`.bat`은 우리가 쓰는 대로 실행되지 않는다. 아래 넷은 윈도우에서 직접 재현해 확인한 것이며, 각각 단독으로 반입 전체를 무력화한다.
+
+- **줄바꿈은 CRLF여야 한다.** cmd.exe는 배치 파일을 실행하면서 줄을 바이트 오프셋으로 다시 찾는다. LF뿐인 파일에 비ASCII(한글) 줄이 있으면 그 다음 줄부터 파싱이 어긋나 줄 중간이 명령으로 실행된다.
+- **파일 인코딩은 콘솔 코드페이지와 같아야 한다.** UTF-8 + `chcp 65001`은 CRLF여도 긴 한글 줄에서 같은 어긋남이 재현된다. CP949로 저장하고 `chcp 949`를 쓰면 재현되지 않는다. 파이썬 호출의 `PYTHONIOENCODING`도 여기에 맞춘다.
+- **`call`은 `.bat`/`.cmd`만 배치로 실행한다.** `call "...\config.env"`는 아무 일도 하지 않고 `errorlevel 0`으로 돌아온다. 운영자에게 익숙한 `config.env` 이름을 유지하려면 가변 영역에 `.cmd` 사본을 만들어 그것을 `call`해야 한다.
+- **후행 역슬래시가 붙은 경로를 따옴표 안에 넣어 외부 프로그램에 넘기지 않는다.** `%~dp0`는 항상 `\`로 끝나므로 `--root "%ROOT%"`는 argv에서 `C:\pi_agent"`로 깨진다. `--root "%ROOT%."`로 경로를 끝낸다.
 
 ## 6. GPU 배치
 
@@ -136,7 +182,34 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 백업 모델로 7~8B급 Q4_K_M을 함께 반입한다. 큰 모델이 뜨지 않아도 그날 안에 동작을 보이기 위한 것이며, 툴 호출 왕복을 별도로 검증해야 한다.
 
-정확한 GGUF 파일명, 파일 크기, SHA256, 그리고 §5에서 쓸 고정 alias는 스테이징 단계에서 확정하고 `STAGING_MANIFEST.json`에 기록한다. 이 문서는 그 값을 고정하지 않는다 — 모델 파일을 아직 받지 않았고, 배포판마다 파일명이 다르기 때문이다.
+**확정값 (Task 7, 2026-08-18).** 위 문단의 산술은 후보 조사 당시 검토했던 Qwen3-Coder-30B-A3B-Instruct(MoE) 기준이다. 실제로 반입이 확정된 모델은 사용자가 이미 확보해 둔 아래 모델이며, 아키텍처가 달라 산술을 다시 했다.
+
+| 항목 | 값 |
+|---|---|
+| 파일명 | `Qwen3.8-27B-Q4_K_M.gguf` (`models\Qwen3.8-27B-Q4_K_M.gguf`, 단일 파일 — 분할 없음, `models\<이름>\` 하위 디렉터리 불필요) |
+| 바이트 | 16,810,714,336 (15.66 GiB) |
+| SHA256 | `e00082f779fa385cee8c68a3ec8833a75778cc87272240b942f74e0b8243e520` |
+| 출처 | `lmstudio-community/Qwen3.8-27B-GGUF` (Hugging Face, llama.cpp b10430으로 양자화). 사용자의 LM Studio 로컬 캐시(`C:\Users\ptg\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\`)에서 그대로 복사했고, 사본의 SHA256이 원본과 일치함을 확인했다 |
+| 라이선스 | Apache 2.0 (원 모델 `Qwen/Qwen3.8-27B` 기준, gated 아님) |
+| 권장 alias | `qwen3.8-27b` |
+| 아키텍처 | GGUF `general.architecture = qwen35` — **dense 27.8B** (MoE 아님). 하이브리드: Gated DeltaNet 선형 어텐션 48층 + 전체 어텐션 16층(`qwen35.full_attention_interval = 4`), `block_count = 65`(본층 64 + MTP 1층), `attention.head_count_kv = 4`, `attention.key_length = attention.value_length = 256` |
+| 32k F16 캐시 산술 | 전체 어텐션 16개 층만 컨텍스트에 비례하는 KV 캐시를 가진다: `2 × 4(head_count_kv) × 256(key/value_length) × 32768 × 2bytes × 16층 = 2.0 GiB`. 나머지 48개 선형 어텐션층은 SSM/conv 상태만 유지하며 이는 컨텍스트 길이와 무관하게 고정 크기다(오더 추정 수십~1백 MiB대 — 정확한 값은 Task 8 리허설에서 `nvidia-smi` 실측으로 확인). 가중치 15.66 GiB + 캐시 약 2.0~2.1 GiB ≈ **17.8 GiB**, 여기에 비전 프로젝터(아래 행) 약 0.87 GiB를 더하면 **≈ 18.7 GiB**. 연산 버퍼·CUDA graph를 넉넉히 얹어도 33GB(GPU0 디스플레이 점유 차감 후 약 32GB) 안에 여유 있게 들어온다 — 원래 검토했던 MoE 후보(약 20.3 GiB)보다 오히려 여유가 크다 |
+| `mmproj-Qwen3.8-27B-BF16.gguf` | 931,145,856 bytes (0.867 GiB). **반입 확정 (Task 7b, 2026-08-18).** 사용자 지시로 반입하며, 폐쇄망 PC에서 에러 코드를 사진·스크린샷으로 입력하는 것이 실사용 목적이다 — "가능하면 넣는" 부가 기능이 아니라 필요 기능이다. `models\` 바로 아래에 평평하게 둔다(주력 모델과 동일한 규칙, `models\Qwen3.8-27B\` 하위 디렉터리 불필요). 사용자의 LM Studio 로컬 캐시(`C:\Users\ptg\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\mmproj-Qwen3.8-27B-BF16.gguf`)에서 그대로 복사했고, 사본의 SHA256이 원본과 일치함을 확인했다. SHA256: `97ba9d70e7407f08c880def231fd360a312c76d0053387733f10dcf6affd75a1`. 설정은 `config.env`의 `MMPROJ_FILE=mmproj-Qwen3.8-27B-BF16.gguf`(기본값으로 채워 둠) — `start-llama.bat`이 이 값이 있으면 `--mmproj`를 조건부로 붙이고, 비우면 텍스트 전용으로 뜬다 |
+| 백업 모델 | 이번 라운드에 반입하지 않음. 사용자가 이미 확보한 주력 모델을 먼저 검증하는 것이 우선이었고, 백업 필요 여부는 Task 8 리허설 결과를 보고 정한다 |
+| 알려진 위험 — Vulkan 폴백 | `bin\llama-vulkan`(§4의 폴백 백엔드)은 이 아키텍처 계열(qwen3.5/qwen35)의 `ggml_ssm_conv`/`ggml_ssm_scan`을 구현하지 않았고, 조용히 CPU로 폴백하면서 GPU↔CPU 경계에서 상태가 손상된다(상류 이슈 `ggml-org/llama.cpp#19957`, 2026-02-27 open, 미해결 — 손상된 출력 또는 `vk::DeviceLostError`로 이어짐). CUDA 백엔드는 완전히 지원한다(`b10470`, 2026-08-17 릴리스 — qwen35 아키텍처와 MTP는 2026-05부터 지원됨). 즉 현장에서 CUDA가 실패해도 `llama-vulkan`은 이 모델에 안전한 폴백이 아니다 — 대신 `bin\llama-cpu`(느리지만 정확)로 내려가야 한다. README와 Task 8 리허설 항목에 이 제약을 명시할 것 |
+| 알려진 위험 — 연산량 | dense 27.8B 전량이 매 토큰 활성화된다(당초 권고안이던 MoE의 활성 3.3B 대비 토큰당 연산량이 훨씬 크다). Pascal(compute 6.1, FP16 텐서코어 없음)에서 체감 속도 저하가 예상된다. 하이브리드 선형 어텐션은 긴 프롬프트의 prefill을 완화할 뿐 디코드 연산량 자체는 줄이지 않는다 — 실측 토큰/초는 Task 8 리허설에서 확인해야 한다 |
+
+`STAGING_MANIFEST.json`에는 스테이징 단계(Task 5)에서 위 파일의 해시가 다시 기록된다.
+
+### 6.1 이미지 입력 경로의 출처
+
+리뷰가 "문서상 주장"으로 남긴 세 가지는 상류 배포물에서 직접 확인한 것이다. 근거를 남겨 둔다.
+
+- 윈도우에서 이미지 붙여넣기가 `Ctrl+V`가 아니라 `Alt+V`라는 것: Pi 0.84.2 `packages/coding-agent/README.md`의 단축키 표가 "Ctrl+V to paste an image or text (Alt+V on Windows), or drag images onto terminal"로 윈도우만 따로 명시한다.
+- 비대화형 `@파일` 참조: 같은 문서의 예시 `pi -p @screenshot.png "What's in this image?"`.
+- 클립보드가 별도 설치 없이 동작한다는 것: `pi-windows-x64.zip`의 파일 목록에 네이티브 애드온 `node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node`가 포함되어 있다(2026-08-18 실측).
+
+세 항목 모두 문서와 아카이브 내용으로 확인한 것이며, 실제 동작은 §8의 리허설에서 스크린샷 왕복으로 확인한다.
 
 ## 7. 오프라인 봉인
 
@@ -159,7 +232,22 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 - `Get-FileHash`, PE 의존성 검사, `llama-server --list-devices`, `nvidia-smi`를 기록한다.
 - 명시적 모델 로드와 readiness 대기, `/v1/models`의 alias 확인.
 - 32k에 가까운 프롬프트, 장시간 생성, 실제 툴 왕복 1회.
-- CUDA / Vulkan / CPU를 각각 별도로 실행해 본다.
+- CUDA / Vulkan / CPU를 각각 별도로 실행해 본다. Qwen3.8-27B(qwen35)에서는
+  Vulkan을 정식 폴백으로 검증하지 않는다 — §6의 "알려진 위험 — Vulkan
+  폴백" 참조. CUDA 실패 시 대체 경로는 CPU만 확인한다.
+- **비전 프로젝터(`MMPROJ_FILE`) 리허설 확인 항목** — "멀티모달로 떴다"는
+  통과 기준이 아니다. 아래 세 가지를 실측으로 확인한다:
+  1. 이 프로젝터는 **BF16**인데 Pascal(compute 6.1)은 BF16 텐서코어를
+     지원하지 않는다. llama.cpp가 변환해 처리하겠지만, 적재 시간·VRAM
+     사용량·(가능하면) 정확도에 어떤 영향이 있는지 실측한다.
+  2. 멀티모달 활성화가 §5 부트스트랩 계약의 텍스트 전용 툴 호출 경로에
+     영향을 주지 않는지 확인한다 — `/v1/models` alias, 툴 왕복 스모크
+     테스트가 `MMPROJ_FILE`을 설정한 상태에서도 그대로 통과해야 한다.
+     영향이 있으면 `MMPROJ_FILE`을 비워 텍스트 전용으로 되돌릴 수 있다.
+  3. **에러 메시지가 담긴 스크린샷 한 장을 실제로 넣어, 모델이 그 안의
+     문자열을 정확히 읽어내는지 확인한다.** 이 기능의 실사용 목적(폐쇄망
+     PC에서 에러 코드를 사진으로 입력)에 대한 실제 성공 기준은 이것이며,
+     서버가 멀티모달 모드로 뜨는 것 자체가 아니다.
 
 ### 8.2 폐쇄망 도착 후
 
@@ -187,9 +275,16 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ## 9. 매니페스트 범위
 
-`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `README-폐쇄망.md`.
+`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`.
 
 `home\agent\`와 `evidence\`는 제외한다. 첫 실행 즉시 내용이 바뀌므로 포함하면 무결성 검사가 곧바로 깨진다.
+
+다음 셋도 같은 이유로 제외한다.
+
+- `config.env` — README와 리허설 절차서가 `GPU_TENSOR_SPLIT` 등을 **현장에서 채우라고 지시한다.** 해시하면 지시를 따른 운영자에게 `hash mismatch: config.env`가 확정적으로 뜨고, 운영자는 무결성 검사 결과를 무시하도록 훈련된다. 그게 전송 손상을 잡는 유일한 장치다. 템플릿 `config.env.example`은 해시를 유지한다.
+- `__pycache__\`와 `*.pyc` — `verify_bundle.py`가 `import manifest`를 먼저 하므로 자기가 검사할 파일을 자기가 다시 쓴다. 대상 PC의 파이썬 버전이 다르면 `unexpected:`로, 소스 mtime이 바뀌면 `hash mismatch:`로 무조건 실패한다. 경로 깊이와 무관하게 제외한다.
+
+해시 범위는 git 추적 범위와 같지 않다. `bin\`, `models\`는 gitignore 대상이지만 반입물의 본체이므로 해시하고, `win\`은 git이 추적하지만 번들 루트로 복사된 사본만 해시하므로 제외한다.
 
 기록 항목은 기존 관례를 따른다: 상대 경로, 파일 수, 바이트, SHA256, 원본과 대상의 일치 여부.
 
@@ -210,7 +305,7 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 - Pi 패키지·확장의 오프라인 설치 (npm 필요)
 - 폐쇄망 내 모델 추가 다운로드
 - 다중 사용자 공유 배포
-- 라우터 모드 다중 모델 운영 (선택지로만 남김)
+- 라우터 모드 다중 모델 운영 (§5.1에서 배제. 정적 제공자 선언으로 대체했다)
 
 ## 12. 성공 기준
 

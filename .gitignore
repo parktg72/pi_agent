@@ -19,8 +19,13 @@ STAGING_MANIFEST.json
 /verify-offline.bat
 /config.env
 /config.env.example
+/models.json
 /tools-win/
 /README-폐쇄망.md
 
 # SDD 작업 공간 (원장·브리프·리뷰 패키지)
 .superpowers/
+
+# 파이썬 바이트코드
+__pycache__/
+*.pyc

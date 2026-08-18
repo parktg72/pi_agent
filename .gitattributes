@@ -1,0 +1,13 @@
+# cmd.exe는 배치 파일을 실행하면서 줄을 바이트 오프셋으로 다시 찾는다.
+# 2026-08-18 윈도우 실측:
+#   - 줄바꿈이 LF뿐이고 줄에 비ASCII 문자가 있으면 그 다음 줄부터 파싱이
+#     어긋난다. LF 판 start-llama.bat은 config.env 호출과 echo가 전부 깨졌고,
+#     바이트만 CRLF로 바꾼 같은 파일은 정상 동작했다.
+#   - UTF-8(chcp 65001)로 저장하면 CRLF여도 긴 한글 줄에서 같은 어긋남이
+#     재현된다. CP949로 저장하고 chcp 949를 쓰면 한 건도 나지 않는다.
+# 따라서 .bat과 config 계열은 CP949 + CRLF로 고정한다. git이 인코딩을 바꾸지
+# 않도록 -text로 두어 바이트를 그대로 저장한다(매니페스트가 해시하는 대상이다).
+*.bat -text
+config.env -text
+config.env.example -text
+models.json text eol=lf
