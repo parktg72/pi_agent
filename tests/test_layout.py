@@ -77,3 +77,30 @@ def test_place_vc_runtime_reports_what_is_missing(tmp_path):
     problems = layout.place_vc_runtime(source, destination)
     assert any("MSVCP140.dll" in p for p in problems)
     assert any("VCRUNTIME140_1.dll" in p for p in problems)
+
+
+def test_extract_refuses_adjacent_directory_escape(tmp_path):
+    archive = tmp_path / "evil.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("../llama-cuda-evil/x", b"nope")
+    destination = tmp_path / "bin" / "llama-cuda"
+    try:
+        layout.extract(archive, destination)
+    except ValueError as error:
+        assert "escaped" in str(error)
+    else:
+        raise AssertionError("인접 디렉터리 탈출을 허용했다")
+    assert not (tmp_path / "bin" / "llama-cuda-evil").exists()
+
+
+def test_extract_refuses_absolute_paths(tmp_path):
+    archive = tmp_path / "evil.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("/etc/passwd", b"nope")
+    destination = tmp_path / "bin" / "llama-cuda"
+    try:
+        layout.extract(archive, destination)
+    except ValueError as error:
+        assert "escaped" in str(error)
+    else:
+        raise AssertionError("절대 경로를 허용했다")

@@ -19,7 +19,7 @@ def extract(zip_path: Path, destination: Path) -> None:
     with zipfile.ZipFile(zip_path) as archive:
         for member in archive.namelist():
             target = (resolved_destination / member).resolve()
-            if not str(target).startswith(str(resolved_destination)):
+            if not target.is_relative_to(resolved_destination):
                 raise ValueError(f"{zip_path.name}의 항목이 대상 밖으로 escaped: {member}")
         archive.extractall(resolved_destination)
 
