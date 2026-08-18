@@ -2,9 +2,21 @@
 bin/
 models/
 
+# pi install로 사전 설치한 확장/스킬 트리 - npm/git 레지스트리에서 받은
+# 상류 배포물이라 bin/models와 같은 이유로 버전 관리 대상이 아니다.
+# STAGING_MANIFEST.json의 해시 범위(EXCLUDED_ROOTS 밖)에는 그대로 남는다.
+pi-packages/
+packages_win/py312/
+# lightgbm이 요구하지만 휠이 동봉하지 않는 VC 런타임 2종. 이 호스트의
+# C:\Windows\System32 에서 복사한 마이크로소프트 재배포물이라 위와 같은 이유로
+# 버전 관리 대상이 아니다. 매니페스트 해시 범위에는 그대로 남는다.
+packages_win/vcruntime/
+
 # 실행하면서 바뀌는 영역 — 매니페스트 해시 범위에서도 제외된다
 home/
 evidence/
+# install-python-packages.bat의 기본 설치 대상 (대상 PC에서 생성)
+.venv/
 
 # 스테이징 산출물
 .cache/
@@ -17,9 +29,11 @@ STAGING_MANIFEST.json
 /start-llama.bat
 /start-pi.bat
 /verify-offline.bat
+/install-python-packages.bat
 /config.env
 /config.env.example
 /models.json
+/settings.packages.json
 /tools-win/
 /README-폐쇄망.md
 

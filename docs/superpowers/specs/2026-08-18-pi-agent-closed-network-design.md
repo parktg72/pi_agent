@@ -89,17 +89,76 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
 │   ├── llama-cpu\            CPU 빌드 (진단용, 독립 디렉터리)
 │   └── python\               Python 3.12 임베디드 배포 (.bat이 쓰는 파이썬)
 ├── models\                   GGUF
+├── packages_win\             Python 3.12 오프라인 휠하우스 (Pi/llama-server와 독립)
+│   ├── py312\                 *.whl 155개, win_amd64 cp312 (`--only-binary=:all:`로만 반입)
+│   ├── vcruntime\             VCOMP140.DLL, MSVCP140.dll — lightgbm용 app-local (§13 아님, 아래 설명)
+│   ├── requirements.txt       사람이 읽는 최상위 목록 (범위 선언)
+│   └── constraints-py312.txt  155개 전체 정확 핀 (진실 출처는 휠셋 — §9 참고)
+├── pi-packages\              사전 설치한 Pi 확장·스킬 트리 (§13)
+│   ├── npm\node_modules\      pi-subagents, rpiv-todo, rpiv-ask-user-question 등
+│   ├── git\github.com\        superpowers 클론 (.git 포함 — 숨김 속성)
+│   └── settings.packages.json  packages 배열 정본의 배치본 (win\ 이 정본)
 ├── home\agent\               PI_CODING_AGENT_DIR — 설정·세션 (가변)
 ├── evidence\                 검증 산출물 (가변)
+├── .venv\                    install-python-packages.bat의 기본 설치 대상 (가변, 대상 PC에서 생성)
 ├── start-llama.bat
 ├── start-pi.bat
 ├── verify-offline.bat
+├── install-python-packages.bat  packages_win\ 를 대상 PC 시스템 Python 3.12에 오프라인 설치
 ├── config.env                운영자가 현장에서 채운다 (해시 범위 밖)
 ├── config.env.example
 ├── models.json               Pi 정적 제공자 선언 (§5.1)
 ├── STAGING_MANIFEST.json
 └── README-폐쇄망.md
 ```
+
+`packages_win\`은 통계·생존분석(pandas/lifelines/statsmodels/scikit-learn 등)
+Python 스택이며 llama.cpp/Pi 기동 경로와 완전히 독립적이다 — 어느 쪽을 먼저
+반입하거나 실행해도 서로 영향을 주지 않는다. 패키지 선정 근거와 조사 과정은
+`.superpowers/sdd/2026-08-18-pi-agent-closed-network/python-wheelhouse-research.md`
+에 있다. `install-python-packages.bat`은 번들 내장 임베디드 파이썬(`bin\python\`)
+을 쓰지 않는다 — 그 배포에는 pip이 없다. 대신 대상 PC에 이미 설치된 시스템
+Python 3.12를 `py -3.12` → `python` 순으로 찾는다(다른 `.bat`들의 "번들 내장
+파이썬 우선" 순서와 의도적으로 반대다). 어느 경로로 찾았든, `config.env`의
+`PYTHON_CMD`로 **지정**된 것이든, 쓰기 전에 두 가지를 검사한다:
+`sys.version_info[:2] == (3, 12)`(휠 155개가 전부 cp312 전용이라 3.13에서는
+155개가 모두 "not a supported wheel"로 실패한다)와 `import pip`(임베디드
+배포를 지정했을 때 여기서 걸린다). 검사 없이 지정값을 그대로 쓰면
+`config.env.example`의 안내를 따라 임베디드 경로를 적은 운영자가 pip 없는
+파이썬으로 설치를 시도하게 된다.
+
+**설치 범위의 기본값은 격리다.** 아무 인자 없이 실행하면 `%ROOT%.venv`를
+만들어 거기에만 설치한다. `--user`를 인자로 명시했을 때만
+`%APPDATA%\Python\Python312\site-packages`에 설치하고, 그때는 그 계정의 모든
+Python 3.12 실행이 영향을 받는다는 경고를 콘솔에 찍는다 — 사내 스크립트가
+`numpy<2`를 쓰고 있으면 그 설치 하나로 깨지고 되돌리는 절차가 없다. `.venv`는
+매니페스트 해시 범위 밖이다(§9): 넣으면 설치 직후 `verify()`가 `unexpected:`를
+수천 건 뱉어 무결성 검사가 영구히 빨간불이 되고, 운영자는 그 결과를 무시하도록
+훈련된다.
+
+`packages_win\vcruntime\`은 lightgbm 하나 때문에 있다. `lightgbm` 휠 안의
+`lib_lightgbm.dll`의 실제 import 테이블에는 `MSVCP140.dll`, `VCOMP140.DLL`
+(OpenMP), `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` 4종이 있는데(실측,
+2026-08-18) 휠은 이 중 어느 것도 벤더링하지 않는다(`scikit-learn`은
+`sklearn\.libs\`에 4종을 전부 자체 동봉해 무사하다). 이 번들이 따로 싣는
+것은 앞의 2종(`VCOMP140.DLL`, `MSVCP140.dll`)뿐이다 — §3.5의 VC 런타임 3종은
+`bin\llama-*\` 안 app-local이라 파이썬 프로세스의 DLL 검색 경로에 없어서
+쓸 수 없다. 나머지 `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` 2종은 대상 PC의
+**시스템 Python 3.12 설치본**이 `Python312\VCRUNTIME140.dll`(과 짝 파일)로
+동봉하는 것을 그대로 쓴다(2026-08-18 실측으로 로드 경로 확인) — 이
+스크립트가 시스템 Python을 요구하는 이유 중 하나다. 위험은 낮지만 이
+전제에 기댄다: 운영자가 표준 python.org 설치본이 아닌 다른 경로(예: 별도
+포터블 배포, VC 런타임을 자체 동봉하지 않는 파이썬)로 Python 3.12를
+넣으면 이 두 DLL이 없을 수 있고, 그러면 `import lightgbm`이 아니라 그보다
+먼저 OS 로더 단계에서 실패한다.
+
+그래서 이 두 DLL(`VCOMP140.DLL`, `MSVCP140.dll`)을 따로 싣고,
+`install-python-packages.bat`이 설치된 `lightgbm\bin\` 옆으로 복사한다 —
+scikit-learn이 하는 것과 같은 app-local 방식이고, 파이썬 3.8+ ctypes가 경로로
+DLL을 열 때 `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR`를 켜므로 그 폴더에서 의존 DLL을
+찾는다. 설치 위치는 격리/`--user`에 따라 다르므로 파이썬에게 직접 묻는다
+(`importlib.util.find_spec` — DLL이 아직 없어 `import lightgbm` 자체가 실패할
+수 있으므로 임포트로 물으면 안 된다).
 
 `bin\python\`은 사용자가 대상 PC에 Python 3.12가 있다고 확인해 주었음에도
 넣는다. 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store
@@ -275,9 +334,15 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ## 9. 매니페스트 범위
 
-`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`.
+`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`, `packages_win\`(휠 155개 + `vcruntime\`의 DLL 2개 + `requirements.txt` + `constraints-py312.txt`), `pi-packages\`(사전 설치한 확장·스킬 트리 + `settings.packages.json`), `tools\`.
+
+`packages_win\`도 다른 반입물과 같은 이유로 불변이다 — 오프라인 설치는 이 폴더의 휠만 참조하고 `install-python-packages.bat`이 쓰는 것은 `home\agent\`(가변, 위에서 이미 제외)와 `.venv\`(아래)뿐이다. 목록은 이 스펙에 다시 나열하지 않는다 — 진실 출처는 `packages_win\requirements.txt`다.
+
+`pi-packages\`도 같다. §13.3이 이 트리를 "매니페스트가 검증한 원본"으로 삼고 매 실행마다 가변 영역인 `home\agent\`로 동기화하므로, 원본이 해시 범위 안에 있어야 그 주장이 성립한다. `bin\`, `models\`와 마찬가지로 gitignore 대상이지만(상류 npm/git 배포물) 해시는 한다 — 해시 범위와 git 추적 범위는 같지 않다.
 
 `home\agent\`와 `evidence\`는 제외한다. 첫 실행 즉시 내용이 바뀌므로 포함하면 무결성 검사가 곧바로 깨진다.
+
+`.venv\`도 제외한다. `install-python-packages.bat`의 기본값이 격리 설치라 대상 PC에서 반드시 생기고, 넣으면 설치 직후 `verify()`가 `unexpected: .venv/...`를 수천 건 뱉는다. `verify_bundle.py`는 그것을 실패로 취급하므로 무결성 검사가 영구히 빨간불이 되고, 운영자는 검사 결과를 무시하도록 훈련된다 — `tools\manifest.py` 독스트링이 명시적으로 경계하는 실패 모드다.
 
 다음 셋도 같은 이유로 제외한다.
 
@@ -302,10 +367,11 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ## 11. 범위 밖
 
-- Pi 패키지·확장의 오프라인 설치 (npm 필요)
 - 폐쇄망 내 모델 추가 다운로드
 - 다중 사용자 공유 배포
 - 라우터 모드 다중 모델 운영 (§5.1에서 배제. 정적 제공자 선언으로 대체했다)
+- 폐쇄망 PC에서의 `pi install` 실행 (npm 필요 — §13이 대신 사전 설치 후
+  트리 반입 방식으로 다룬다)
 
 ## 12. 성공 기준
 
@@ -314,3 +380,114 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 1. `start-llama.bat` 실행 → 지정한 모델이 GPU에 적재되고 `/v1/models`에 고정 alias가 나타난다.
 2. `start-pi.bat` 실행 → Pi가 그 모델로 대화하고 파일 읽기 툴 왕복이 성립한다.
 3. `verify-offline.bat` 실행 → 위 증거가 `evidence\`에 남고, 외부 연결 시도가 0건으로 기록된다.
+
+## 13. Pi 확장·스킬 반입
+
+조사 근거: `.superpowers/sdd/2026-08-18-pi-agent-closed-network/pi-packages-research.md`.
+
+### 13.1 왜 Node/npm을 반입하지 않아도 되는가
+
+`pi.exe`는 Bun으로 컴파일된 자기완결 바이너리이고(§3.1), 확장은 TypeScript
+원본 그대로 배포돼 내장 런타임이 직접 로드·실행한다. npm/git은 **설치
+시점**에만 불리고, 로드 시점에는 전혀 관여하지 않는다 — `pi.exe` 내부
+로직(`resolvePackageSources`)이 로컬 `package.json`의 버전만 semver로
+비교해 "이미 설치돼 있는지" 판단하고, 맞으면 npm/git을 아예 호출하지 않는다.
+git 소스는 더 단순해서 존재 여부만 본다.
+
+그래서 이 반입은 **사전 설치 후 설치된 트리를 통째로 옮기는 방식**을
+쓴다: 인터넷이 되는 윈도우 PC에서 `pi.exe`로 실제 `pi install`을 실행하고,
+그 결과물(`npm\`, `git\`, `settings.json`의 `packages` 배열)을 번들 루트
+`pi-packages\`에 실어 온다. 대상 PC에서는 `pi install`을 한 번도 부르지
+않는다.
+
+### 13.2 설치는 반드시 윈도우에서 한다
+
+이 조사(그리고 이 웨이브의 실제 설치, Task 9 참고)는 WSL에서 실제 윈도우
+프로세스(`cmd.exe`)를 띄워 `bin\pi\pi.exe`를 직접 실행하는 방식으로
+진행했다 — Linux 샌드박스에서 설치하면 네이티브 애드온이 섞인 패키지의
+경우 윈도우에서 못 쓰는 `.node`/`.so` 바이너리가 실릴 위험이 있기
+때문이다. 이번에 반입이 확정된 4개 패키지(`superpowers`, `pi-subagents`,
+`rpiv-todo`, `rpiv-ask-user-question`)는 순수 JS/TS로 실측 결과 네이티브
+바이너리가 전혀 없었지만, 원칙은 패키지 구성과 무관하게 지킨다 — 다음
+라운드에 네이티브 의존 패키지(예: 조사 단계에서 제외한 `pi-lens`)를
+추가하게 되면 이 원칙이 실제로 막아 주는 값이 된다.
+
+### 13.3 `home\`이 매니페스트 해시 범위 밖이라는 문제와 그 해법
+
+`STAGING_MANIFEST.json`의 `excludedRoots`에 `home`이 들어 있어, 설치
+결과물을 `home\agent\`에 직접 두면 무결성 검증 범위 밖에서 전달된다.
+`models.json`이 이미 쓰는 패턴(번들 루트에 해시 대상 원본을 두고, 실행할
+때마다 가변 영역으로 덮어쓴다)을 그대로 따른다:
+
+- 설치 트리는 번들 루트 `pi-packages\npm\`, `pi-packages\git\`에 둔다 —
+  `home`과 달리 `EXCLUDED_ROOTS`에 없으므로 매니페스트 해시 범위 안이다.
+- `start-pi.bat`이 실행할 때마다 `xcopy /E /H /D /Q`로
+  `PI_CODING_AGENT_DIR\npm\`, `\git\`에 동기화한다. `/D`가 파일 단위로
+  이미 최신인 것을 건너뛰므로 별도 비교 로직 없이 반복 실행 비용이
+  낮다. `/H`가 없으면 git 클론 안의 숨김(Hidden) 속성 `.git` 폴더가
+  통째로 스킵된다(2026-08-18 윈도우 실측 — 연구 조사에서는 예상하지
+  못했던 지점).
+- `settings.json`의 `packages` 배열은 `models.json`과 다르게 다룬다.
+  사용자가 `/trust`, `/settings`로 직접 고칠 수 있는 파일이라 매번
+  덮어쓰면 사용자 설정이 날아간다. 그래서 **없을 때만** 번들 루트
+  `pi-packages\settings.packages.json`(정본은 `win\settings.packages.json`,
+  models.json과 같은 이유로 git 추적)을 심는다 — 최초 1회 등록 이후로는
+  사용자의 편집을 존중한다.
+- `pi-packages\npm\`, `pi-packages\git\` 자체는 `bin\`, `models\`와 같은
+  이유로 git 추적 대상이 아니다(상류 npm/git 레지스트리에서 받은 배포물,
+  `.gitignore`에 등재) — 물리적으로는 번들 루트에 존재하고 매니페스트가
+  해시하지만, 이 저장소의 git 이력에는 들어가지 않는다.
+
+### 13.4 반입 패키지 4개
+
+`git:github.com/obra/superpowers@v6.3.0`(필수), `npm:pi-subagents@0.50.0`(필수),
+`npm:@juicesharp/rpiv-todo@2.6.1`, `npm:@juicesharp/rpiv-ask-user-question@2.6.1`.
+선정 근거와 비교 조사한 대안(각 비추천 사유 포함)은 조사 문서 §2·§3에
+있다. 각 패키지가 실사용에서 하는 일은 `win\README-폐쇄망.md`의 "Pi
+확장·스킬" 절에 표로 정리했다. 전부 전역(user) 스코프로만 설치한다 —
+프로젝트 스코프는 무인 기동에서 트러스트 프롬프트 문제를 일으킨다(조사
+문서 §1-5).
+
+### 13.5 리허설에서 반드시 확인해야 하는 우려 세 가지
+
+이 반입은 실제 GPU가 붙은 윈도우 PC에서의 리허설(Task 8)로 아직
+검증되지 않았다. `docs/superpowers/plans/rehearsal-2026-08-18.md`의 확장
+로드 확인 절차가 아래 세 가지를 다룬다.
+
+1. **윈도우 설치 필요성** — §13.2의 원칙이 실제로 지켜졌는지. 이번
+   4개 패키지는 네이티브 바이너리가 없음을 실측했지만(Task 9 보고서
+   참고), 향후 패키지를 추가할 때마다 같은 실측을 반복해야 한다.
+2. **`home\`이 해시 범위 밖이라는 문제** — §13.3의 동기화가 실제로
+   매 실행마다 일어나고, 전송 손상이나 부분 복사가 발생했을 때
+   `verify_bundle.py`가 잡아내는지. `pi-packages\`가 매니페스트 해시
+   대상에 실제로 포함됐는지(재발행 시 `STAGING_MANIFEST.json`의
+   `files` 배열에 `pi-packages/...` 항목이 나타나는지)도 확인 대상이다.
+3. **`pi-subagents`의 백그라운드 위임은 폐쇄망에서 동작하지 않는다** —
+   포어그라운드 위임과 백그라운드/async 위임이 서로 다른 실행 파일을
+   쓴다. 소스 실측(`pi-packages\npm\node_modules\pi-subagents\src\`):
+
+   - 포어그라운드(`runs/foreground/execution.ts`)는
+     `runs/shared/pi-spawn.ts`의 `getPiSpawnCommand()`를 쓴다. 그
+     함수는 `process.execPath`의 파일명이 `pi`/`pi.exe`이면 그것을
+     그대로 자식 명령으로 쓴다(`isStandalonePiExecutable`). 이 번들은
+     `pi.exe` 단독 바이너리이므로 **여기에 해당하고, Node 없이 동작한다.**
+   - 백그라운드/async(`runs/background/async-execution.ts:493`)는
+     `shared/node-executable.ts`의 `resolveNodeExecutable()`을 쓴다. 그
+     함수는 `process.execPath`의 파일명이 `node`/`node.exe`가 아니면
+     문자열 `"node.exe"`를 돌려주고, 스폰은
+     `spawn(nodeCommand, [jitiCliPath, runner, cfgPath])` 형태다.
+     `pi.exe`에서 실행하면 execPath가 `pi.exe`라 항상 이 폴백을 타고,
+     Node가 없는 폐쇄망 PC에서는 **`ENOENT`로 실패한다.**
+
+   즉 이 항목의 실패 양상은 "2차 llama-server 기동"이나 "VRAM 추가
+   점유"가 아니다. 그런 것은 애초에 일어나지 않는다 — 백그라운드
+   러너는 프로세스 생성 단계에서 죽는다(`[pi-subagents] async spawn
+   failed: ... ENOENT`). 리허설에서 확인할 것은 이 구분이지 GPU 충돌이
+   아니다.
+
+   동시 요청 쪽은 별개이고, 그것도 폭주가 아니다. `start-llama.bat`이
+   `--parallel 1`로 띄우므로 llama-server는 동시 요청을 **직렬화한다.**
+   포어그라운드 위임을 N개 겹치면 응답이 뒤섞이는 것이 아니라 지연이
+   N배가 되고, 그것이 재시도·타임아웃과 겹쳐 "멈춘 것처럼" 보인다.
+   대응은 `--parallel`을 올리는 것이 아니라(KV 캐시가 슬롯 수만큼
+   쪼개진다) 동시 위임 수를 줄이는 것이다.
