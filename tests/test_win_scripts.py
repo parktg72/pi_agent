@@ -72,8 +72,42 @@ def test_no_script_mentions_cuda_13():
 
 def test_config_example_documents_every_variable_the_scripts_read():
     example = read("config.env.example")
-    for variable in ("LLAMA_BACKEND", "LLAMA_PORT", "LLAMA_CTX", "MODEL_FILE", "MODEL_ALIAS", "GPU_TENSOR_SPLIT"):
+    for variable in (
+        "LLAMA_BACKEND",
+        "LLAMA_PORT",
+        "LLAMA_CTX",
+        "MODEL_FILE",
+        "MODEL_ALIAS",
+        "GPU_TENSOR_SPLIT",
+        "MMPROJ_FILE",
+    ):
         assert variable in example, variable
+
+
+def test_start_llama_wires_mmproj_conditionally():
+    body = read("start-llama.bat")
+    assert "MMPROJ_FILE" in body
+    assert "--mmproj" in body
+    assert 'set "MMPROJ_ARG="' in body
+    assert "%MMPROJ_ARG%" in body
+    # 실행 줄에 조건부로 채운 변수를 넣지, 고정 인자로 박아 넣지 않는다.
+    assert "-sm layer %TS_ARG% %MMPROJ_ARG%" in body
+
+
+def test_start_llama_refuses_to_run_with_missing_mmproj_file():
+    body = read("start-llama.bat")
+    assert "if defined MMPROJ_FILE if not exist" in body
+
+
+def test_start_llama_never_hardcodes_the_mmproj_filename():
+    # --mmproj 경로는 config.env의 MMPROJ_FILE로만 들어와야 한다.
+    body = read("start-llama.bat")
+    assert "mmproj-Qwen3.8-27B-BF16.gguf" not in body
+
+
+def test_config_example_documents_mmproj_file():
+    example = read("config.env.example")
+    assert "MMPROJ_FILE" in example
 
 
 def test_batch_files_switch_the_console_to_utf8_right_after_echo_off():

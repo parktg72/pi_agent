@@ -147,8 +147,8 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 | 라이선스 | Apache 2.0 (원 모델 `Qwen/Qwen3.8-27B` 기준, gated 아님) |
 | 권장 alias | `qwen3.8-27b` |
 | 아키텍처 | GGUF `general.architecture = qwen35` — **dense 27.8B** (MoE 아님). 하이브리드: Gated DeltaNet 선형 어텐션 48층 + 전체 어텐션 16층(`qwen35.full_attention_interval = 4`), `block_count = 65`(본층 64 + MTP 1층), `attention.head_count_kv = 4`, `attention.key_length = attention.value_length = 256` |
-| 32k F16 캐시 산술 | 전체 어텐션 16개 층만 컨텍스트에 비례하는 KV 캐시를 가진다: `2 × 4(head_count_kv) × 256(key/value_length) × 32768 × 2bytes × 16층 = 2.0 GiB`. 나머지 48개 선형 어텐션층은 SSM/conv 상태만 유지하며 이는 컨텍스트 길이와 무관하게 고정 크기다(오더 추정 수십~1백 MiB대 — 정확한 값은 Task 8 리허설에서 `nvidia-smi` 실측으로 확인). 가중치 15.66 GiB + 캐시 약 2.0~2.1 GiB ≈ **17.8 GiB**. 연산 버퍼·CUDA graph를 넉넉히 얹어도 33GB(GPU0 디스플레이 점유 차감 후 약 32GB) 안에 여유 있게 들어온다 — 원래 검토했던 MoE 후보(약 20.3 GiB)보다 오히려 여유가 크다 |
-| `mmproj-Qwen3.8-27B-BF16.gguf` | 931,145,856 bytes. **반입 제외.** §5의 결정적 부트스트랩 계약은 텍스트 전용이고 Pi의 툴 호출 경로에 이미지 입력이 없어 비전 프로젝터가 불필요하다. 필요해지면 `models\Qwen3.8-27B\` 하위 디렉터리 규칙(§4)을 새로 적용해야 한다 |
+| 32k F16 캐시 산술 | 전체 어텐션 16개 층만 컨텍스트에 비례하는 KV 캐시를 가진다: `2 × 4(head_count_kv) × 256(key/value_length) × 32768 × 2bytes × 16층 = 2.0 GiB`. 나머지 48개 선형 어텐션층은 SSM/conv 상태만 유지하며 이는 컨텍스트 길이와 무관하게 고정 크기다(오더 추정 수십~1백 MiB대 — 정확한 값은 Task 8 리허설에서 `nvidia-smi` 실측으로 확인). 가중치 15.66 GiB + 캐시 약 2.0~2.1 GiB ≈ **17.8 GiB**, 여기에 비전 프로젝터(아래 행) 약 0.87 GiB를 더하면 **≈ 18.7 GiB**. 연산 버퍼·CUDA graph를 넉넉히 얹어도 33GB(GPU0 디스플레이 점유 차감 후 약 32GB) 안에 여유 있게 들어온다 — 원래 검토했던 MoE 후보(약 20.3 GiB)보다 오히려 여유가 크다 |
+| `mmproj-Qwen3.8-27B-BF16.gguf` | 931,145,856 bytes (0.867 GiB). **반입 확정 (Task 7b, 2026-08-18).** 사용자 지시로 반입하며, 폐쇄망 PC에서 에러 코드를 사진·스크린샷으로 입력하는 것이 실사용 목적이다 — "가능하면 넣는" 부가 기능이 아니라 필요 기능이다. `models\` 바로 아래에 평평하게 둔다(주력 모델과 동일한 규칙, `models\Qwen3.8-27B\` 하위 디렉터리 불필요). 사용자의 LM Studio 로컬 캐시(`C:\Users\ptg\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\mmproj-Qwen3.8-27B-BF16.gguf`)에서 그대로 복사했고, 사본의 SHA256이 원본과 일치함을 확인했다. SHA256: `97ba9d70e7407f08c880def231fd360a312c76d0053387733f10dcf6affd75a1`. 설정은 `config.env`의 `MMPROJ_FILE=mmproj-Qwen3.8-27B-BF16.gguf`(기본값으로 채워 둠) — `start-llama.bat`이 이 값이 있으면 `--mmproj`를 조건부로 붙이고, 비우면 텍스트 전용으로 뜬다 |
 | 백업 모델 | 이번 라운드에 반입하지 않음. 사용자가 이미 확보한 주력 모델을 먼저 검증하는 것이 우선이었고, 백업 필요 여부는 Task 8 리허설 결과를 보고 정한다 |
 | 알려진 위험 — Vulkan 폴백 | `bin\llama-vulkan`(§4의 폴백 백엔드)은 이 아키텍처 계열(qwen3.5/qwen35)의 `ggml_ssm_conv`/`ggml_ssm_scan`을 구현하지 않았고, 조용히 CPU로 폴백하면서 GPU↔CPU 경계에서 상태가 손상된다(상류 이슈 `ggml-org/llama.cpp#19957`, 2026-02-27 open, 미해결 — 손상된 출력 또는 `vk::DeviceLostError`로 이어짐). CUDA 백엔드는 완전히 지원한다(`b10470`, 2026-08-17 릴리스 — qwen35 아키텍처와 MTP는 2026-05부터 지원됨). 즉 현장에서 CUDA가 실패해도 `llama-vulkan`은 이 모델에 안전한 폴백이 아니다 — 대신 `bin\llama-cpu`(느리지만 정확)로 내려가야 한다. README와 Task 8 리허설 항목에 이 제약을 명시할 것 |
 | 알려진 위험 — 연산량 | dense 27.8B 전량이 매 토큰 활성화된다(당초 권고안이던 MoE의 활성 3.3B 대비 토큰당 연산량이 훨씬 크다). Pascal(compute 6.1, FP16 텐서코어 없음)에서 체감 속도 저하가 예상된다. 하이브리드 선형 어텐션은 긴 프롬프트의 prefill을 완화할 뿐 디코드 연산량 자체는 줄이지 않는다 — 실측 토큰/초는 Task 8 리허설에서 확인해야 한다 |
@@ -176,7 +176,22 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 - `Get-FileHash`, PE 의존성 검사, `llama-server --list-devices`, `nvidia-smi`를 기록한다.
 - 명시적 모델 로드와 readiness 대기, `/v1/models`의 alias 확인.
 - 32k에 가까운 프롬프트, 장시간 생성, 실제 툴 왕복 1회.
-- CUDA / Vulkan / CPU를 각각 별도로 실행해 본다.
+- CUDA / Vulkan / CPU를 각각 별도로 실행해 본다. Qwen3.8-27B(qwen35)에서는
+  Vulkan을 정식 폴백으로 검증하지 않는다 — §6의 "알려진 위험 — Vulkan
+  폴백" 참조. CUDA 실패 시 대체 경로는 CPU만 확인한다.
+- **비전 프로젝터(`MMPROJ_FILE`) 리허설 확인 항목** — "멀티모달로 떴다"는
+  통과 기준이 아니다. 아래 세 가지를 실측으로 확인한다:
+  1. 이 프로젝터는 **BF16**인데 Pascal(compute 6.1)은 BF16 텐서코어를
+     지원하지 않는다. llama.cpp가 변환해 처리하겠지만, 적재 시간·VRAM
+     사용량·(가능하면) 정확도에 어떤 영향이 있는지 실측한다.
+  2. 멀티모달 활성화가 §5 부트스트랩 계약의 텍스트 전용 툴 호출 경로에
+     영향을 주지 않는지 확인한다 — `/v1/models` alias, 툴 왕복 스모크
+     테스트가 `MMPROJ_FILE`을 설정한 상태에서도 그대로 통과해야 한다.
+     영향이 있으면 `MMPROJ_FILE`을 비워 텍스트 전용으로 되돌릴 수 있다.
+  3. **에러 메시지가 담긴 스크린샷 한 장을 실제로 넣어, 모델이 그 안의
+     문자열을 정확히 읽어내는지 확인한다.** 이 기능의 실사용 목적(폐쇄망
+     PC에서 에러 코드를 사진으로 입력)에 대한 실제 성공 기준은 이것이며,
+     서버가 멀티모달 모드로 뜨는 것 자체가 아니다.
 
 ### 8.2 폐쇄망 도착 후
 

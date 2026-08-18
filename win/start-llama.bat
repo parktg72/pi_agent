@@ -25,9 +25,16 @@ if not exist "%ROOT%models\%MODEL_FILE%" (
   echo [FAIL] %ROOT%models\%MODEL_FILE% 없음
   exit /b 2
 )
+if defined MMPROJ_FILE if not exist "%ROOT%models\%MMPROJ_FILE%" (
+  echo [FAIL] %ROOT%models\%MMPROJ_FILE% 없음
+  exit /b 2
+)
 
 set "TS_ARG="
 if defined GPU_TENSOR_SPLIT set "TS_ARG=-ts %GPU_TENSOR_SPLIT%"
+
+set "MMPROJ_ARG="
+if defined MMPROJ_FILE set MMPROJ_ARG=--mmproj "%ROOT%models\%MMPROJ_FILE%"
 
 echo [info] %LLAMA_BACKEND% 백엔드로 %MODEL_FILE% 를 %MODEL_ALIAS% 로 올린다
 "%LLAMA_DIR%\llama-server.exe" ^
@@ -39,5 +46,5 @@ echo [info] %LLAMA_BACKEND% 백엔드로 %MODEL_FILE% 를 %MODEL_ALIAS% 로 올�
   -ngl 999 ^
   -c %LLAMA_CTX% ^
   --parallel 1 ^
-  -sm layer %TS_ARG%
+  -sm layer %TS_ARG% %MMPROJ_ARG%
 exit /b %errorlevel%
