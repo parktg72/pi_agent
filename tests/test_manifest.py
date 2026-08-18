@@ -19,6 +19,7 @@ def make_bundle(tmp_path: Path) -> Path:
     (tmp_path / "tools").mkdir()
     (tmp_path / "tools" / "verify_bundle.py").write_text("# 폐쇄망에서도 실행된다")
     (tmp_path / ".gitignore").write_text("bin/")
+    (tmp_path / ".gitattributes").write_text("*.bat -text\n")
     return tmp_path
 
 

@@ -20,7 +20,7 @@ SCHEMA = "pi_agent.closed_network_stage.v1"
 EXCLUDED_ROOTS = ("home", "evidence", "docs", "tests", "win", ".git", ".cache", ".pytest_cache", ".superpowers")
 # config.env는 README와 리허설 절차서가 현장에서 채우라고 지시하는 파일이다.
 # 해시하면 지시를 따른 운영자에게 hash mismatch가 확정적으로 뜬다.
-EXCLUDED_FILES = ("STAGING_MANIFEST.json", ".gitignore", "config.env")
+EXCLUDED_FILES = ("STAGING_MANIFEST.json", ".gitignore", ".gitattributes", "config.env")
 # 파이썬 바이트코드는 대상 PC에서 verify_bundle.py가 import되는 순간 다시
 # 쓰인다. 즉 검사 대상이 검사 도중 바뀐다. 깊이와 무관하게 제외한다.
 EXCLUDED_DIR_NAMES = ("__pycache__",)
