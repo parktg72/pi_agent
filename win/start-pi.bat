@@ -28,6 +28,9 @@ if not defined PI_MODEL_ID (
 call :place_models_json
 if errorlevel 1 exit /b 5
 
+call :sync_packages
+if errorlevel 1 exit /b 7
+
 call :resolve_python
 if errorlevel 1 exit /b 4
 
@@ -62,6 +65,42 @@ if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"
 copy /y "%ROOT%models.json" "%PI_CODING_AGENT_DIR%\models.json" >nul
 if errorlevel 1 (
   echo [FAIL] models.json을 %PI_CODING_AGENT_DIR% 로 복사하지 못했다
+  exit /b 1
+)
+goto :eof
+
+:sync_packages
+rem pi install로 사전 설치해 둔 확장/스킬 트리(pi-packages\npm, pi-packages\git)는
+rem 로드 시점에 npm/git이 전혀 필요 없다 - PI_CODING_AGENT_DIR 밑에 npm\, git\
+rem 구조로만 놓이면 pi.exe가 그대로 인식한다(pi.exe docs\packages.md).
+rem xcopy /D로 파일 단위 갱신 비교를 xcopy에 맡긴다 - 이미 최신이면 건너뛰므로
+rem 여기서 별도 비교 로직을 만들지 않는다. /H는 git 클론 안의 숨김(Hidden)
+rem 속성 .git 폴더가 조용히 스킵되지 않게 한다(2026-08-18 윈도우 실측).
+if not exist "%ROOT%pi-packages\npm" goto :sync_packages_git
+if not exist "%PI_CODING_AGENT_DIR%\npm" mkdir "%PI_CODING_AGENT_DIR%\npm"
+xcopy "%ROOT%pi-packages\npm" "%PI_CODING_AGENT_DIR%\npm\" /E /H /Y /D /Q >nul
+if errorlevel 1 (
+  echo [FAIL] pi-packages\npm 을 %PI_CODING_AGENT_DIR%\npm 로 동기화하지 못했다
+  exit /b 1
+)
+:sync_packages_git
+if not exist "%ROOT%pi-packages\git" goto :sync_packages_settings
+if not exist "%PI_CODING_AGENT_DIR%\git" mkdir "%PI_CODING_AGENT_DIR%\git"
+xcopy "%ROOT%pi-packages\git" "%PI_CODING_AGENT_DIR%\git\" /E /H /Y /D /Q >nul
+if errorlevel 1 (
+  echo [FAIL] pi-packages\git 를 %PI_CODING_AGENT_DIR%\git 로 동기화하지 못했다
+  exit /b 1
+)
+:sync_packages_settings
+rem settings.json은 사용자가 /trust, /settings로 직접 고칠 수 있는 파일이라
+rem models.json처럼 매번 덮어쓰면 사용자 설정이 날아간다. 없을 때만
+rem 패키지 목록이 담긴 원본을 심어 최초 1회만 등록한다.
+if exist "%PI_CODING_AGENT_DIR%\settings.json" goto :eof
+if not exist "%ROOT%pi-packages\settings.packages.json" goto :eof
+if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"
+copy /y "%ROOT%pi-packages\settings.packages.json" "%PI_CODING_AGENT_DIR%\settings.json" >nul
+if errorlevel 1 (
+  echo [FAIL] settings.json 초기값을 심지 못했다
   exit /b 1
 )
 goto :eof

@@ -87,8 +87,51 @@
   30B 모델 실사용 속도가 나오지 않으므로 CPU는 진단용이다.
 - `MSVCP140.dll` 관련 오류가 나면 `bin\llama-cuda` 안의 app-local DLL이 지워졌는지 확인한다.
 
+## Pi 확장·스킬 (pi-packages)
+
+`pi-packages\` 에는 인터넷이 되는 윈도우 PC에서 `pi install` 로 미리 설치해
+반입한 확장·스킬 트리가 들어 있다(조사 근거:
+`.superpowers/sdd/2026-08-18-pi-agent-closed-network/pi-packages-research.md`).
+`pi.exe` 는 Bun으로 컴파일된 자기완결 바이너리라 확장을 로드하는 시점에는
+npm/git이 전혀 필요 없다 — npm/git은 오직 **설치할 때만** 쓰이고, 이미 설치된
+트리가 `PI_CODING_AGENT_DIR\npm\`, `\git\` 구조로 놓여 있으면 그대로 읽는다.
+그래서 대상 PC에서 다시 설치하지 않고, 설치가 끝난 결과물을 통째로 실어
+왔다. `start-pi.bat` 이 실행할 때마다 `pi-packages\` 를 `home\agent\` 로
+동기화한다(models.json과 같은 관용구 — 매니페스트가 검증한 원본에서 항상
+다시 채운다).
+
+| 패키지 | 하는 일 |
+|---|---|
+| `git:github.com/obra/superpowers@v6.3.0` | 브레인스토밍·계획 작성·TDD·체계적 디버깅·코드 리뷰 요청/수신·작업분해 등 11종 스킬과, 세션 시작 시 `using-superpowers` 스킬을 시스템 컨텍스트에 자동 주입하는 부트스트랩 확장 |
+| `npm:pi-subagents@0.50.0` | `subagent` 툴 — `scout`/`worker`/`reviewer`/`oracle`/`delegate`/`researcher` 내장 서브에이전트로 자식 Pi 세션에 위임한다. superpowers 확장이 이름까지 지목하며 전제로 깔아 둔 툴이다. `researcher` 페르소나는 웹 검색을 전제로 하므로 폐쇄망에서는 무용하다 — 나머지 5개는 로컬 모델 호출만 하므로 유효하다 |
+| `npm:@juicesharp/rpiv-todo@2.6.1` | `/reload`·컴팩션에도 살아남는 라이브 todo 오버레이. superpowers 확장이 "설치된 todo 툴이 있으면 쓰라"고 안내하는 공백을 메운다 |
+| `npm:@juicesharp/rpiv-ask-user-question@2.6.1` | 모델이 모호할 때 추측 대신 구조화된 객관식 질문을 사용자에게 던지는 툴 |
+
+**`pi install` 은 폐쇄망 PC에서 쓰지 않는다.** npm/git 네트워크 호출이
+필요하므로 폐쇄망에서는 동작하지 않는다 — 반입한 `pi-packages\` 가 이미 그
+결과물이다. 패키지를 추가/교체하려면 인터넷이 되는 윈도우 PC에서 다시
+설치하고 `pi-packages\` 를 통째로 다시 실어 와야 한다.
+
+**확장을 끄고 싶을 때**: 스킬/서브에이전트 없이 순수 모델 대화만 필요하면
+`pi.exe` 호출에 플래그를 더한다.
+```
+bin\pi\pi.exe --offline --model %PI_MODEL_ID% --no-extensions --no-skills
+```
+`--no-extensions` 는 확장 발견 자체를 끄고(브레인스토밍 자동 주입, subagent
+툴, todo 오버레이, ask-user-question 툴이 전부 사라진다), `--no-skills` 는
+스킬 발견만 끈다(`/skill:이름` 으로 직접 지정한 스킬은 그래도 로드된다).
+`start-pi.bat` 은 이 두 플래그를 기본으로 넣지 않으므로, 끄고 싶을 때는
+직접 인자를 붙여 실행하거나(`start-pi.bat --no-extensions --no-skills` —
+`%*` 로 그대로 전달된다) `bin\pi\pi.exe` 를 직접 호출한다.
+
+`home\agent\settings.json` 은 사용자가 `/trust`, `/settings` 로 직접 고칠 수
+있는 파일이라 models.json과 달리 **처음 한 번만** 채워진다(이미 있으면
+건드리지 않는다) — 패키지 목록을 지웠다가 되살리고 싶으면 그 파일을 직접
+지우고 `start-pi.bat` 을 다시 실행한다.
+
 ## 하지 않는 것
-- `pi install` 로 패키지나 확장을 설치하지 않는다. npm이 필요하고 폐쇄망에서는 동작하지 않는다.
+- `pi install` 로 패키지나 확장을 새로 설치하지 않는다. npm이 필요하고
+  폐쇄망에서는 동작하지 않는다 — 반입한 `pi-packages\` 를 쓴다(위 절 참고).
 - 모델을 새로 내려받지 않는다. 반입한 GGUF만 쓴다.
 - `--host` 를 `127.0.0.1` 외의 값으로 바꾸지 않는다.
 

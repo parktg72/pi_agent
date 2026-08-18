@@ -486,3 +486,91 @@ def test_install_python_packages_refuses_to_run_without_the_wheelhouse():
     assert 'if not exist "%PKG_DIR%"' in body
     assert 'if not exist "%CONSTRAINT%"' in body
     assert 'if not exist "%REQUIREMENTS%"' in body
+
+
+# --- Pi 확장/스킬 패키지 (pi-packages\) - superpowers, pi-subagents, rpiv-* ---
+# 조사(pi-packages-research.md): pi.exe는 로드 시점에 npm/git이 전혀 필요
+# 없고, PI_CODING_AGENT_DIR\npm\, \git\ 구조로만 놓이면 그대로 인식한다.
+# 그래서 여기서 새로 설치하지 않고, 사전 설치한 트리를 pi-packages\에 실어
+# 와서 매 실행마다 home\agent\로 동기화한다 - models.json과 같은 관용구다.
+
+def test_start_pi_syncs_pi_packages_before_launching_pi():
+    body = read("start-pi.bat")
+    assert "pi-packages" in body
+    assert "call :sync_packages" in body
+    index_sync = body.index("call :sync_packages")
+    index_pi_launch = body.rindex("bin\\pi\\pi.exe")
+    assert index_sync < index_pi_launch, "패키지 동기화가 Pi 기동보다 먼저여야 한다"
+
+
+def test_pi_package_sync_runs_after_models_json_is_placed():
+    # 순서 자체가 정답을 좌우하진 않지만, models.json 배치와 같은 계열의
+    # "기동 전 설정 배치" 단계이므로 place_models_json 바로 뒤에 둔다.
+    body = read("start-pi.bat")
+    index_models = body.index("call :place_models_json")
+    index_sync = body.index("call :sync_packages")
+    assert index_models < index_sync
+
+
+def test_pi_package_sync_copies_npm_and_git_subtrees_verbatim():
+    # 조사 결과가 명시한 대로 npm\, git\ 하위 구조를 임의로 바꾸지 않는다 -
+    # PI_CODING_AGENT_DIR\npm\, \git\ 이 아니면 pi.exe가 패키지를 찾지 못한다.
+    body = read("start-pi.bat")
+    assert 'xcopy "%ROOT%pi-packages\\npm" "%PI_CODING_AGENT_DIR%\\npm\\"' in body
+    assert 'xcopy "%ROOT%pi-packages\\git" "%PI_CODING_AGENT_DIR%\\git\\"' in body
+
+
+def _sync_packages_subroutine_body(body: str) -> str:
+    # read()는 read_text()를 거치므로 CRLF가 이미 LF로 정규화돼 있다(다른
+    # 테스트들도 body를 이 형태로 다룬다). ":sync_packages"는 "call :sync_packages"
+    # 호출부에도 부분 문자열로 나타나므로, 레이블 정의 자체(줄 앞)를 앵커로
+    # 삼는다. ":load_config"도 같은 이유로 "call :load_config"가 파일 맨
+    # 앞에 먼저 나온다.
+    sync_start = body.index("\n:sync_packages\n")
+    load_config_label = body.index("\n:load_config\n")
+    assert sync_start < load_config_label, "sync_packages 서브루틴이 load_config보다 먼저 정의돼야 한다"
+    return body[sync_start:load_config_label]
+
+
+def test_pi_package_sync_destination_is_never_a_hardcoded_absolute_path():
+    # 동기화 대상은 %ROOT%/%PI_CODING_AGENT_DIR% 기반이어야 한다 - C:\... 같은
+    # 이 머신 전용 절대 경로가 박히면 다른 배치 위치(C:\pi_agent)에서 깨진다.
+    sync_body = _sync_packages_subroutine_body(read("start-pi.bat"))
+    assert "C:\\" not in sync_body
+    assert "%ROOT%pi-packages" in sync_body
+    assert "%PI_CODING_AGENT_DIR%" in sync_body
+
+
+def test_pi_package_sync_uses_xcopy_update_flag_not_a_hand_rolled_diff():
+    # "이미 최신이면 매번 전량 복사하지 않는다"는 요구를 xcopy /D 하나로
+    # 충족한다 - 파일 단위 비교 로직을 이 배치에 새로 만들지 않는다.
+    sync_body = _sync_packages_subroutine_body(read("start-pi.bat"))
+    assert " /D " in sync_body
+    # git 클론의 .git은 윈도우에서 숨김(Hidden) 속성이 붙는다(2026-08-18 실측) -
+    # /H가 없으면 xcopy가 통째로 건너뛴다.
+    assert " /H " in sync_body
+
+
+def test_pi_package_sync_seeds_settings_json_only_when_absent():
+    # settings.json은 사용자가 /trust, /settings로 직접 고칠 수 있는 파일이라
+    # models.json처럼 매번 덮어쓰면 사용자 설정이 날아간다 - 없을 때만 심는다.
+    body = read("start-pi.bat")
+    assert 'if exist "%PI_CODING_AGENT_DIR%\\settings.json" goto :eof' in body
+    assert 'copy /y "%ROOT%pi-packages\\settings.packages.json" "%PI_CODING_AGENT_DIR%\\settings.json"' in body
+
+
+def test_pi_packages_settings_template_declares_the_four_required_packages():
+    # 정본은 win\ (git 추적)에 있다 - bin\, models\ 와 달리 이 파일은 작고
+    # 사람이 리뷰할 수 있는 텍스트라 models.json과 같은 방식으로 추적한다.
+    # 실제 배치본(pi-packages\settings.packages.json)은 bin\, models\ 와 같은
+    # 이유로 gitignore 대상이라 fresh checkout에는 없을 수 있으므로 여기서는
+    # 이 파일을 대상으로 검증하지 않는다.
+    import json
+
+    document = json.loads((WIN / "settings.packages.json").read_text(encoding="utf-8"))
+    assert document["packages"] == [
+        "git:github.com/obra/superpowers@v6.3.0",
+        "npm:pi-subagents@0.50.0",
+        "npm:@juicesharp/rpiv-todo@2.6.1",
+        "npm:@juicesharp/rpiv-ask-user-question@2.6.1",
+    ]

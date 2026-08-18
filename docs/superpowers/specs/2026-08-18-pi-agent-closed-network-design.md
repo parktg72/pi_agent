@@ -318,10 +318,99 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ## 11. 범위 밖
 
-- Pi 패키지·확장의 오프라인 설치 (npm 필요)
 - 폐쇄망 내 모델 추가 다운로드
 - 다중 사용자 공유 배포
 - 라우터 모드 다중 모델 운영 (§5.1에서 배제. 정적 제공자 선언으로 대체했다)
+- 폐쇄망 PC에서의 `pi install` 실행 (npm 필요 — §13이 대신 사전 설치 후
+  트리 반입 방식으로 다룬다)
+
+## 13. Pi 확장·스킬 반입
+
+조사 근거: `.superpowers/sdd/2026-08-18-pi-agent-closed-network/pi-packages-research.md`.
+
+### 13.1 왜 Node/npm을 반입하지 않아도 되는가
+
+`pi.exe`는 Bun으로 컴파일된 자기완결 바이너리이고(§3.1), 확장은 TypeScript
+원본 그대로 배포돼 내장 런타임이 직접 로드·실행한다. npm/git은 **설치
+시점**에만 불리고, 로드 시점에는 전혀 관여하지 않는다 — `pi.exe` 내부
+로직(`resolvePackageSources`)이 로컬 `package.json`의 버전만 semver로
+비교해 "이미 설치돼 있는지" 판단하고, 맞으면 npm/git을 아예 호출하지 않는다.
+git 소스는 더 단순해서 존재 여부만 본다.
+
+그래서 이 반입은 **사전 설치 후 설치된 트리를 통째로 옮기는 방식**을
+쓴다: 인터넷이 되는 윈도우 PC에서 `pi.exe`로 실제 `pi install`을 실행하고,
+그 결과물(`npm\`, `git\`, `settings.json`의 `packages` 배열)을 번들 루트
+`pi-packages\`에 실어 온다. 대상 PC에서는 `pi install`을 한 번도 부르지
+않는다.
+
+### 13.2 설치는 반드시 윈도우에서 한다
+
+이 조사(그리고 이 웨이브의 실제 설치, Task 9 참고)는 WSL에서 실제 윈도우
+프로세스(`cmd.exe`)를 띄워 `bin\pi\pi.exe`를 직접 실행하는 방식으로
+진행했다 — Linux 샌드박스에서 설치하면 네이티브 애드온이 섞인 패키지의
+경우 윈도우에서 못 쓰는 `.node`/`.so` 바이너리가 실릴 위험이 있기
+때문이다. 이번에 반입이 확정된 4개 패키지(`superpowers`, `pi-subagents`,
+`rpiv-todo`, `rpiv-ask-user-question`)는 순수 JS/TS로 실측 결과 네이티브
+바이너리가 전혀 없었지만, 원칙은 패키지 구성과 무관하게 지킨다 — 다음
+라운드에 네이티브 의존 패키지(예: 조사 단계에서 제외한 `pi-lens`)를
+추가하게 되면 이 원칙이 실제로 막아 주는 값이 된다.
+
+### 13.3 `home\`이 매니페스트 해시 범위 밖이라는 문제와 그 해법
+
+`STAGING_MANIFEST.json`의 `excludedRoots`에 `home`이 들어 있어, 설치
+결과물을 `home\agent\`에 직접 두면 무결성 검증 범위 밖에서 전달된다.
+`models.json`이 이미 쓰는 패턴(번들 루트에 해시 대상 원본을 두고, 실행할
+때마다 가변 영역으로 덮어쓴다)을 그대로 따른다:
+
+- 설치 트리는 번들 루트 `pi-packages\npm\`, `pi-packages\git\`에 둔다 —
+  `home`과 달리 `EXCLUDED_ROOTS`에 없으므로 매니페스트 해시 범위 안이다.
+- `start-pi.bat`이 실행할 때마다 `xcopy /E /H /D /Q`로
+  `PI_CODING_AGENT_DIR\npm\`, `\git\`에 동기화한다. `/D`가 파일 단위로
+  이미 최신인 것을 건너뛰므로 별도 비교 로직 없이 반복 실행 비용이
+  낮다. `/H`가 없으면 git 클론 안의 숨김(Hidden) 속성 `.git` 폴더가
+  통째로 스킵된다(2026-08-18 윈도우 실측 — 연구 조사에서는 예상하지
+  못했던 지점).
+- `settings.json`의 `packages` 배열은 `models.json`과 다르게 다룬다.
+  사용자가 `/trust`, `/settings`로 직접 고칠 수 있는 파일이라 매번
+  덮어쓰면 사용자 설정이 날아간다. 그래서 **없을 때만** 번들 루트
+  `pi-packages\settings.packages.json`(정본은 `win\settings.packages.json`,
+  models.json과 같은 이유로 git 추적)을 심는다 — 최초 1회 등록 이후로는
+  사용자의 편집을 존중한다.
+- `pi-packages\npm\`, `pi-packages\git\` 자체는 `bin\`, `models\`와 같은
+  이유로 git 추적 대상이 아니다(상류 npm/git 레지스트리에서 받은 배포물,
+  `.gitignore`에 등재) — 물리적으로는 번들 루트에 존재하고 매니페스트가
+  해시하지만, 이 저장소의 git 이력에는 들어가지 않는다.
+
+### 13.4 반입 패키지 4개
+
+`git:github.com/obra/superpowers@v6.3.0`(필수), `npm:pi-subagents@0.50.0`(필수),
+`npm:@juicesharp/rpiv-todo@2.6.1`, `npm:@juicesharp/rpiv-ask-user-question@2.6.1`.
+선정 근거와 비교 조사한 대안(각 비추천 사유 포함)은 조사 문서 §2·§3에
+있다. 각 패키지가 실사용에서 하는 일은 `win\README-폐쇄망.md`의 "Pi
+확장·스킬" 절에 표로 정리했다. 전부 전역(user) 스코프로만 설치한다 —
+프로젝트 스코프는 무인 기동에서 트러스트 프롬프트 문제를 일으킨다(조사
+문서 §1-5).
+
+### 13.5 리허설에서 반드시 확인해야 하는 우려 세 가지
+
+이 반입은 실제 GPU가 붙은 윈도우 PC에서의 리허설(Task 8)로 아직
+검증되지 않았다. `docs/superpowers/plans/rehearsal-2026-08-18.md`의 확장
+로드 확인 절차가 아래 세 가지를 다룬다.
+
+1. **윈도우 설치 필요성** — §13.2의 원칙이 실제로 지켜졌는지. 이번
+   4개 패키지는 네이티브 바이너리가 없음을 실측했지만(Task 9 보고서
+   참고), 향후 패키지를 추가할 때마다 같은 실측을 반복해야 한다.
+2. **`home\`이 해시 범위 밖이라는 문제** — §13.3의 동기화가 실제로
+   매 실행마다 일어나고, 전송 손상이나 부분 복사가 발생했을 때
+   `verify_bundle.py`가 잡아내는지. `pi-packages\`가 매니페스트 해시
+   대상에 실제로 포함됐는지(재발행 시 `STAGING_MANIFEST.json`의
+   `files` 배열에 `pi-packages/...` 항목이 나타나는지)도 확인 대상이다.
+3. **`pi-subagents`와 단일 GPU 충돌** — 이 번들은 단일 GPU에 단일
+   27B 모델을 `-m` 단일 모드로 띄우는 구성이다. `pi-subagents`가
+   스폰하는 자식 Pi 세션이 같은 `local` 정적 제공자로 라우팅되고
+   동시 요청을 견디는지, 서브에이전트 병렬 실행이 로컬 추론 서버에
+   대한 동시 요청 폭주로 이어져 응답이 깨지거나 타임아웃 나지 않는지
+   실측이 필요하다 — 조사 문서가 검증하지 못한 채 남긴 항목이다.
 
 ## 12. 성공 기준
 
