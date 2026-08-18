@@ -19,6 +19,7 @@ STAGING_MANIFEST.json
 /verify-offline.bat
 /config.env
 /config.env.example
+/models.json
 /tools-win/
 /README-폐쇄망.md
 

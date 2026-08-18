@@ -1,50 +1,111 @@
 @echo off
-chcp 65001 >nul
+chcp 949 >nul
 setlocal enabledelayedexpansion
 set "ROOT=%~dp0"
-if exist "%ROOT%config.env" call "%ROOT%config.env"
+rem »ó´ë °æ·Î°¡ È£Ãâ ½ÃÁ¡ÀÇ cwd°¡ ¾Æ´Ï¶ó ¹øµé ·çÆ®¸¦ ±âÁØÀ¸·Î Ç®¸®°Ô ÇÑ´Ù.
+cd /d "%ROOT%"
+call :load_config
+if errorlevel 1 exit /b 6
 if not defined LLAMA_PORT set "LLAMA_PORT=8080"
+
+if not defined MODEL_ALIAS (
+  echo [FAIL] MODEL_ALIAS ¹Ì¼³Á¤ - config.env¸¦ Ã¤¿ö¶ó
+  exit /b 2
+)
+if not defined PI_MODEL_ID (
+  echo [FAIL] PI_MODEL_ID ¹Ì¼³Á¤ - config.env¸¦ Ã¤¿ö¶ó. Çü½ÄÀº ^<Á¦°øÀÚ^>/^<MODEL_ALIAS^> ÀÌ´Ù.
+  exit /b 2
+)
+
 set "EV=%ROOT%evidence"
 if not exist "%EV%" mkdir "%EV%"
 
-echo [1/6] í•˜ë“œì›¨ì–´ì™€ ë“œë¼ì´ë²„
+echo [1/6] ÇÏµå¿ş¾î¿Í µå¶óÀÌ¹ö
 nvidia-smi > "%EV%\nvidia-smi.txt" 2>&1
 type "%EV%\nvidia-smi.txt"
 
-echo [2/6] ë²ˆë“¤ ë¬´ê²°ì„±
+echo [2/6] ¹øµé ¹«°á¼º
 call :resolve_python
 if errorlevel 1 exit /b 4
-set "PYTHONIOENCODING=utf-8"
-%PYTHON_CMD% "%ROOT%tools\verify_bundle.py" --root "%ROOT%" > "%EV%\manifest-check.txt" 2>&1
+set "PYTHONIOENCODING=cp949"
+rem %ROOT%´Â Ç×»ó ¿ª½½·¡½Ã·Î ³¡³­´Ù. "%ROOT%"¸¦ ±×´ë·Î ³Ñ±â¸é ´İ´Â µû¿ÈÇ¥°¡
+rem ÀÌ½ºÄÉÀÌÇÁµÇ¾î argv°¡ ±úÁø´Ù(½ÇÃø: --root "C:\pi_agent\" -> 'C:\pi_agent"').
+rem ¸¶Ä§Ç¥¸¦ ºÙ¿© °æ·Î¸¦ ³¡³½´Ù.
+%PYTHON_CMD% "%ROOT%tools\verify_bundle.py" --root "%ROOT%." > "%EV%\manifest-check.txt" 2>&1
 type "%EV%\manifest-check.txt"
 
-echo [3/6] ë„¤íŠ¸ì›Œí¬ ìº¡ì²˜ ì‹œì‘
+echo [3/6] ³×Æ®¿öÅ© Ä¸Ã³ ½ÃÀÛ
 pktmon start --capture --file-name "%EV%\pktmon.etl" >nul 2>&1
-if errorlevel 1 echo [warn] pktmonì„ ì‹œì‘í•˜ì§€ ëª»í–ˆë‹¤ - ê´€ë¦¬ì ê¶Œí•œì´ í•„ìš”í•  ìˆ˜ ìˆë‹¤
+if errorlevel 1 echo [warn] pktmonÀ» ½ÃÀÛÇÏÁö ¸øÇß´Ù - °ü¸®ÀÚ ±ÇÇÑÀÌ ÇÊ¿äÇÒ ¼ö ÀÖ´Ù
 
-echo [4/6] ì ì¬ëœ ëª¨ë¸
+echo [4/6] ÀûÀçµÈ ¸ğµ¨
 powershell -NoProfile -ExecutionPolicy Bypass -Command "(Invoke-RestMethod -Uri 'http://127.0.0.1:%LLAMA_PORT%/v1/models' -TimeoutSec 10) | ConvertTo-Json -Depth 6" > "%EV%\v1-models.json" 2>&1
 type "%EV%\v1-models.json"
 
-echo [5/6] Pi íˆ´ ì™•ë³µ
+echo [5/6] Pi Åø ¿Õº¹
 set "PI_OFFLINE=1"
 set "PI_CODING_AGENT_DIR=%ROOT%home\agent"
 set "LLAMA_BASE_URL=http://127.0.0.1:%LLAMA_PORT%"
-"%ROOT%bin\pi\pi.exe" --offline --no-session --model "%MODEL_ALIAS%" --tools read --mode json -p "evidence\probe.txt íŒŒì¼ì„ read ë„êµ¬ë¡œ ì½ê³  ê·¸ ì•ˆì˜ ë‚±ë§ í•˜ë‚˜ë¥¼ ê·¸ëŒ€ë¡œ ë‹µí•˜ë¼" > "%EV%\pi-tool-roundtrip.json" 2>&1
+call :place_models_json
+if errorlevel 1 exit /b 5
+rem ÇÁ·Îºê ÆÄÀÏÀº ÀÌ ½ºÅ©¸³Æ®°¡ Á÷Á¢ ¾´´Ù. ¾ø´Â ÆÄÀÏÀ» ÀĞÀ¸¶ó°í ½ÃÅ°¸é
+rem Åø ¿Õº¹ Áõ°Å°¡ ÅëÂ°·Î ³¯¾Æ°£´Ù. ÇÁ·ÒÇÁÆ®¿¡´Â Àı´ë °æ·Î·Î ³Ñ±ä´Ù.
+set "PROBE=%EV%\probe.txt"
+> "%PROBE%" echo NARWHAL-7Q2X
+"%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --tools read --mode json -p "%PROBE% ÆÄÀÏÀ» read µµ±¸·Î ÀĞ°í ±× ¾È¿¡ ÀûÈù ³¹¸»À» ±×´ë·Î ´äÇÏ¶ó" > "%EV%\pi-tool-roundtrip.json" 2>&1
 type "%EV%\pi-tool-roundtrip.json"
 
-echo [6/6] ë„¤íŠ¸ì›Œí¬ ìº¡ì²˜ ì¢…ë£Œ
+echo [6/6] ³×Æ®¿öÅ© Ä¸Ã³ Á¾·á
 pktmon stop >nul 2>&1
 pktmon etl2txt "%EV%\pktmon.etl" --out "%EV%\pktmon.txt" >nul 2>&1
 
 echo.
-echo ì¦ê±°ëŠ” %EV% ì— ìˆë‹¤. ì¢…ë£Œ ì½”ë“œê°€ ì•„ë‹ˆë¼ ê·¸ ì•ˆì˜ ë‚´ìš©ì´ íŒì • ê¸°ì¤€ì´ë‹¤.
-echo í™•ì¸í•  ê²ƒ: nvidia-smi ë“œë¼ì´ë²„ 551.61 ì´ìƒ, ë§¤ë‹ˆí˜ìŠ¤íŠ¸ ì¼ì¹˜, v1-modelsì— %MODEL_ALIAS%,
-echo pi-tool-roundtrip.json ì•ˆì˜ ì‹¤ì œ ë„êµ¬ ì‹¤í–‰ê³¼ ìµœì¢… ë‹µë³€, pktmon.txtì— ì™¸ë¶€ ì£¼ì†Œ ì‹œë„ 0ê±´.
+echo Áõ°Å´Â %EV% ¿¡ ÀÖ´Ù. Á¾·á ÄÚµå°¡ ¾Æ´Ï¶ó ±× ¾ÈÀÇ ³»¿ëÀÌ ÆÇÁ¤ ±âÁØÀÌ´Ù.
+echo È®ÀÎÇÒ °Í: nvidia-smi µå¶óÀÌ¹ö 551.61 ÀÌ»ó, ¸Å´ÏÆä½ºÆ® ÀÏÄ¡, v1-models¿¡ %MODEL_ALIAS%,
+echo pi-tool-roundtrip.json ¾ÈÀÇ ½ÇÁ¦ µµ±¸ ½ÇÇà°ú ÃÖÁ¾ ´äº¯¿¡ ³¹¸» NARWHAL-7Q2X,
+echo pktmon.txt¿¡ ¿ÜºÎ ÁÖ¼Ò ½Ãµµ 0°Ç.
 goto :end
+
+:place_models_json
+rem pi.exeÀÇ llama.cpp Á¦°øÀÚ´Â ¶ó¿ìÅÍ ¸ğµå¸¦ ¿ä±¸ÇÑ´Ù. ÀÌ ¹øµéÀº -m ´ÜÀÏ ¸ğµ¨
+rem ¸ğµå·Î ¶ç¿ì¹Ç·Î Á¤Àû Á¦°øÀÚ ¼±¾ğ(models.json)À¸·Î ¿£µåÆ÷ÀÎÆ®¸¦ ÀÎ½Ä½ÃÅ²´Ù.
+if not exist "%ROOT%models.json" (
+  echo [FAIL] %ROOT%models.json ¾øÀ½ - Pi°¡ ·ÎÄÃ ¿£µåÆ÷ÀÎÆ®¸¦ ÀÎ½ÄÇÏÁö ¸øÇÑ´Ù
+  exit /b 1
+)
+if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"
+copy /y "%ROOT%models.json" "%PI_CODING_AGENT_DIR%\models.json" >nul
+if errorlevel 1 (
+  echo [FAIL] models.jsonÀ» %PI_CODING_AGENT_DIR% ·Î º¹»çÇÏÁö ¸øÇß´Ù
+  exit /b 1
+)
+goto :eof
+
+:load_config
+rem cmdÀÇ callÀº .bat/.cmd È®ÀåÀÚ¸¸ ¹èÄ¡·Î ½ÇÇàÇÑ´Ù. .env¸¦ ±×´ë·Î callÇÏ¸é
+rem ¾Æ¹« ÀÏµµ ÇÏÁö ¾Ê°í errorlevel 0À¸·Î µ¹¾Æ¿Â´Ù - 2026-08-18 À©µµ¿ì ½ÇÃø:
+rem config.envÀÇ ¸ğµç setÀÌ ¹«½ÃµÇ¾î MODEL_ALIAS°¡ ³¡³» ºñ¾î ÀÖ¾ú´Ù.
+rem ¿î¿µÀÚ¿¡°Ô ÀÍ¼÷ÇÑ ÆÄÀÏ¸íÀ» À¯ÁöÇÏ¸é¼­ ½ÇÁ¦·Î ½ÇÇàµÇ°Ô ÇÏ·Á°í, °¡º¯ ¿µ¿ª¿¡
+rem .cmd »çº»À» ¸¸µé¾î ±×°ÍÀ» callÇÑ´Ù. »çº»Àº ¸Å¹ø ¿øº»¿¡¼­ ´Ù½Ã ¸¸µç´Ù.
+if not exist "%ROOT%config.env" goto :eof
+if not exist "%ROOT%home\agent" mkdir "%ROOT%home\agent"
+copy /y "%ROOT%config.env" "%ROOT%home\agent\config.cmd" >nul
+if errorlevel 1 (
+  echo [FAIL] config.env¸¦ ½ÇÇà °¡´ÉÇÑ »çº»À¸·Î º¹»çÇÏÁö ¸øÇß´Ù
+  exit /b 1
+)
+call "%ROOT%home\agent\config.cmd"
+goto :eof
 
 :resolve_python
 if defined PYTHON_CMD goto :eof
+rem ¹øµé ³»Àå ÀÓº£µğµå ¹èÆ÷¸¦ °¡Àå ¸ÕÀú º»´Ù - °ü¸®ÀÚ ±ÇÇÑµµ ³×Æ®¿öÅ©µµ ¾ø´Â
+rem °÷¿¡¼­ ½Ã½ºÅÛ ÆÄÀÌ½ãÀÌ ¾ø°Å³ª Microsoft Store ¾Û ½ÇÇà º°Äª ½ºÅÓÀÌ ÀâÈ÷¸é
+rem º¹±¸°¡ ºÒ°¡´ÉÇÏ±â ¶§¹®ÀÌ´Ù.
+if not exist "%ROOT%bin\python\python.exe" goto :resolve_python_system
+set "PYTHON_CMD="%ROOT%bin\python\python.exe""
+goto :eof
+:resolve_python_system
 py -3.12 -c "import sys" >nul 2>&1
 if not errorlevel 1 (
   set "PYTHON_CMD=py -3.12"
@@ -55,7 +116,7 @@ if not errorlevel 1 (
   set "PYTHON_CMD=python"
   goto :eof
 )
-echo [FAIL] Pythonì„ ì°¾ì§€ ëª»í–ˆë‹¤ - config.envì˜ PYTHON_CMDë¡œ ê²½ë¡œë¥¼ ì§€ì •í•˜ë¼
+echo [FAIL] PythonÀ» Ã£Áö ¸øÇß´Ù - config.envÀÇ PYTHON_CMD·Î °æ·Î¸¦ ÁöÁ¤ÇÏ¶ó
 exit /b 1
 
 :end

@@ -14,6 +14,9 @@ from manifest import sha256_of
 _LLAMA_TAG = "b10470"
 _LLAMA_BASE = f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_TAG}/"
 _PI_BASE = "https://github.com/earendil-works/pi/releases/download/v0.84.2/"
+# 3.12 계열 중 윈도우 임베디드 배포가 나온 마지막 패치. 3.12.11부터는
+# 보안 수정만 소스로 나오고 embed-amd64.zip 자산이 없다(2026-08-18 실측: 404).
+_PYTHON_VERSION = "3.12.10"
 _FORBIDDEN_TOKENS = ("cuda-13", "cuda_13", "cuda-14", "cuda_14")
 
 
@@ -55,6 +58,15 @@ CATALOG: dict[str, Asset] = {
         f"llama-{_LLAMA_TAG}-bin-win-cpu-x64.zip",
         "a31f1f317813ae7e044be183e0a20b90e78a80c0e97ee11a8b32a014eccd5043",
         18470203,
+    ),
+    # 대상 PC에 Python 3.12가 설치돼 있다는 것은 사용자가 확인해 주었다. 그래도
+    # 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store의
+    # 앱 실행 별칭 스텁이 잡히면 복구가 불가능하다. 번들이 자기 파이썬을 들고 간다.
+    "python-embed": Asset(
+        name=f"python-{_PYTHON_VERSION}-embed-amd64.zip",
+        url=f"https://www.python.org/ftp/python/{_PYTHON_VERSION}/python-{_PYTHON_VERSION}-embed-amd64.zip",
+        sha256="4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+        bytes=11133606,
     ),
 }
 

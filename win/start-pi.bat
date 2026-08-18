@@ -1,38 +1,90 @@
 @echo off
-chcp 65001 >nul
+chcp 949 >nul
 setlocal
 set "ROOT=%~dp0"
-if exist "%ROOT%config.env" call "%ROOT%config.env"
+cd /d "%ROOT%"
+call :load_config
+if errorlevel 1 exit /b 6
 if not defined LLAMA_PORT set "LLAMA_PORT=8080"
+if not defined MODEL_LOAD_TIMEOUT set "MODEL_LOAD_TIMEOUT=600"
 
 set "PI_OFFLINE=1"
 set "PI_CODING_AGENT_DIR=%~dp0home\agent"
 set "LLAMA_BASE_URL=http://127.0.0.1:%LLAMA_PORT%"
 
 if not exist "%ROOT%bin\pi\pi.exe" (
-  echo [FAIL] %ROOT%bin\pi\pi.exe ì—†ìŒ
+  echo [FAIL] %ROOT%bin\pi\pi.exe ¾øÀ½
   exit /b 2
 )
 if not defined MODEL_ALIAS (
-  echo [FAIL] MODEL_ALIAS ë¯¸ì„¤ì • - config.envë¥¼ ì±„ì›Œë¼
+  echo [FAIL] MODEL_ALIAS ¹Ì¼³Á¤ - config.env¸¦ Ã¤¿ö¶ó
   exit /b 2
 )
+if not defined PI_MODEL_ID (
+  echo [FAIL] PI_MODEL_ID ¹Ì¼³Á¤ - config.env¸¦ Ã¤¿ö¶ó. Çü½ÄÀº ^<Á¦°øÀÚ^>/^<MODEL_ALIAS^> ÀÌ°í
+  echo        Á¦°øÀÚ´Â models.jsonÀÇ providers Å°, µŞºÎºĞÀº MODEL_ALIAS¿Í ±ÛÀÚ ±×´ë·Î °°¾Æ¾ß ÇÑ´Ù.
+  exit /b 2
+)
+
+call :place_models_json
+if errorlevel 1 exit /b 5
 
 call :resolve_python
 if errorlevel 1 exit /b 4
 
-set "PYTHONIOENCODING=utf-8"
-%PYTHON_CMD% "%ROOT%tools\wait_model.py" --base-url "%LLAMA_BASE_URL%" --alias "%MODEL_ALIAS%" --timeout 600
+set "PYTHONIOENCODING=cp949"
+%PYTHON_CMD% "%ROOT%tools\wait_model.py" --base-url "%LLAMA_BASE_URL%" --alias "%MODEL_ALIAS%" --timeout %MODEL_LOAD_TIMEOUT%
 if errorlevel 1 (
-  echo [FAIL] ëª¨ë¸ì´ ì¤€ë¹„ë˜ì§€ ì•Šì•˜ë‹¤ - Pië¥¼ ì‹œì‘í•˜ì§€ ì•ŠëŠ”ë‹¤
+  echo [FAIL] ¸ğµ¨ÀÌ ÁØºñµÇÁö ¾Ê¾Ò´Ù - Pi¸¦ ½ÃÀÛÇÏÁö ¾Ê´Â´Ù
   exit /b 3
 )
 
-"%ROOT%bin\pi\pi.exe" --offline --model "%MODEL_ALIAS%" %*
+"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" %*
 exit /b %errorlevel%
+
+:place_models_json
+rem pi.exeÀÇ llama.cpp Á¦°øÀÚ´Â ¶ó¿ìÅÍ ¸ğµå¸¦ ¿ä±¸ÇÑ´Ù("Server is not running in
+rem llama.cpp router mode"). ÀÌ ¹øµéÀº ¹«ÀÎ ±âµ¿ÀÇ °áÁ¤¼ºÀ» À§ÇØ -m ´ÜÀÏ ¸ğµ¨
+rem ¸ğµå·Î ¶ç¿ì¹Ç·Î ±× °æ·Î¸¦ ¾µ ¼ö ¾ø´Ù. ´ë½Å Á¤Àû Á¦°øÀÚ ¼±¾ğÀ¸·Î Ç¬´Ù.
+rem °ËÁõµÈ ¿øº»Àº ¹øµé ·çÆ®¿¡ ÀÖ°í(¸Å´ÏÆä½ºÆ® ÇØ½Ã ¹üÀ§ ¾È), °¡º¯ ¿µ¿ªÀÎ
+rem home\agent\ ·Î ¸Å¹ø µ¤¾î½á ¼³Á¤ÀÌ Ç×»ó ¿øº»¿¡¼­ ³ª¿À°Ô ÇÑ´Ù.
+if not exist "%ROOT%models.json" (
+  echo [FAIL] %ROOT%models.json ¾øÀ½ - Pi°¡ ·ÎÄÃ ¿£µåÆ÷ÀÎÆ®¸¦ ÀÎ½ÄÇÏÁö ¸øÇÑ´Ù
+  exit /b 1
+)
+if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"
+copy /y "%ROOT%models.json" "%PI_CODING_AGENT_DIR%\models.json" >nul
+if errorlevel 1 (
+  echo [FAIL] models.jsonÀ» %PI_CODING_AGENT_DIR% ·Î º¹»çÇÏÁö ¸øÇß´Ù
+  exit /b 1
+)
+goto :eof
+
+:load_config
+rem cmdÀÇ callÀº .bat/.cmd È®ÀåÀÚ¸¸ ¹èÄ¡·Î ½ÇÇàÇÑ´Ù. .env¸¦ ±×´ë·Î callÇÏ¸é
+rem ¾Æ¹« ÀÏµµ ÇÏÁö ¾Ê°í errorlevel 0À¸·Î µ¹¾Æ¿Â´Ù - 2026-08-18 À©µµ¿ì ½ÇÃø:
+rem config.envÀÇ ¸ğµç setÀÌ ¹«½ÃµÇ¾î MODEL_ALIAS°¡ ³¡³» ºñ¾î ÀÖ¾ú´Ù.
+rem ¿î¿µÀÚ¿¡°Ô ÀÍ¼÷ÇÑ ÆÄÀÏ¸íÀ» À¯ÁöÇÏ¸é¼­ ½ÇÁ¦·Î ½ÇÇàµÇ°Ô ÇÏ·Á°í, °¡º¯ ¿µ¿ª¿¡
+rem .cmd »çº»À» ¸¸µé¾î ±×°ÍÀ» callÇÑ´Ù. »çº»Àº ¸Å¹ø ¿øº»¿¡¼­ ´Ù½Ã ¸¸µç´Ù.
+if not exist "%ROOT%config.env" goto :eof
+if not exist "%ROOT%home\agent" mkdir "%ROOT%home\agent"
+copy /y "%ROOT%config.env" "%ROOT%home\agent\config.cmd" >nul
+if errorlevel 1 (
+  echo [FAIL] config.env¸¦ ½ÇÇà °¡´ÉÇÑ »çº»À¸·Î º¹»çÇÏÁö ¸øÇß´Ù
+  exit /b 1
+)
+call "%ROOT%home\agent\config.cmd"
+goto :eof
 
 :resolve_python
 if defined PYTHON_CMD goto :eof
+rem ¹øµé ³»Àå ÀÓº£µğµå ¹èÆ÷¸¦ °¡Àå ¸ÕÀú º»´Ù - °ü¸®ÀÚ ±ÇÇÑµµ ³×Æ®¿öÅ©µµ ¾ø´Â
+rem °÷¿¡¼­ ½Ã½ºÅÛ ÆÄÀÌ½ãÀÌ ¾ø°Å³ª Microsoft Store ¾Û ½ÇÇà º°Äª ½ºÅÓÀÌ ÀâÈ÷¸é
+rem º¹±¸°¡ ºÒ°¡´ÉÇÏ±â ¶§¹®ÀÌ´Ù.
+if not exist "%ROOT%bin\python\python.exe" goto :resolve_python_system
+set "PYTHON_CMD="%ROOT%bin\python\python.exe""
+goto :eof
+:resolve_python_system
 py -3.12 -c "import sys" >nul 2>&1
 if not errorlevel 1 (
   set "PYTHON_CMD=py -3.12"
@@ -43,5 +95,5 @@ if not errorlevel 1 (
   set "PYTHON_CMD=python"
   goto :eof
 )
-echo [FAIL] Pythonì„ ì°¾ì§€ ëª»í–ˆë‹¤ - config.envì˜ PYTHON_CMDë¡œ ê²½ë¡œë¥¼ ì§€ì •í•˜ë¼
+echo [FAIL] PythonÀ» Ã£Áö ¸øÇß´Ù - config.envÀÇ PYTHON_CMD·Î °æ·Î¸¦ ÁöÁ¤ÇÏ¶ó
 exit /b 1

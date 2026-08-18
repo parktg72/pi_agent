@@ -60,3 +60,21 @@ def test_verify_downloaded_is_quiet_when_the_file_matches(tmp_path):
         bytes=len(payload),
     )
     assert assets.verify_downloaded(path, asset) == []
+
+
+def test_catalog_pins_the_bundled_python_runtime():
+    # 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store의
+    # 앱 실행 별칭 스텁이 잡히면 복구가 불가능하다. 번들이 자기 파이썬을 들고 간다.
+    python = assets.CATALOG["python-embed"]
+    assert python.name == "python-3.12.10-embed-amd64.zip"
+    assert python.url == (
+        "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
+    )
+    assert python.sha256 == "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+    assert python.bytes == 11133606
+
+
+def test_every_catalog_entry_is_pinned():
+    for key, asset in assets.CATALOG.items():
+        assert asset.sha256 and len(asset.sha256) == 64, key
+        assert asset.bytes and asset.bytes > 0, key

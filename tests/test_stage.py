@@ -7,12 +7,16 @@ import stage
 
 
 def test_plan_targets_maps_every_catalog_entry_to_its_own_directory():
+    import assets
+
     targets = stage.plan_targets()
+    assert set(targets) == set(assets.CATALOG), "카탈로그에 있는데 배치 대상이 없는 자산은 조용히 누락된다"
     assert targets["pi"] == ("bin/pi", "")
     assert targets["llama-cuda"] == ("bin/llama-cuda", "cuda")
     assert targets["llama-cudart"] == ("bin/llama-cuda", "")
     assert targets["llama-vulkan"] == ("bin/llama-vulkan", "vulkan")
     assert targets["llama-cpu"] == ("bin/llama-cpu", "cpu")
+    assert targets["python-embed"] == ("bin/python", "")
 
 
 def test_manifest_command_writes_a_document_and_verifies_it(tmp_path, capsys):
@@ -44,25 +48,45 @@ def test_fetch_refuses_a_catalog_entry_without_a_pinned_hash(monkeypatch, tmp_pa
     assert code == 1
 
 
-def test_layout_refuses_to_extract_when_cache_file_is_tampered(tmp_path):
+def test_layout_refuses_to_extract_when_cache_file_is_tampered(tmp_path, capsys):
+    # 자산 하나만 캐시에 두면 sorted(CATALOG)가 그보다 앞선 키에서 "missing file:"로
+    # 먼저 1을 반환해 변조 분기에 닿지 않는다. 전부 정상으로 놓고 하나만 변조한다.
+    import hashlib
+    import unittest.mock as mock
     import zipfile
+
     import assets
 
-    # Create a synthetic zip file with correct metadata
     cache_dir = tmp_path / ".cache"
     cache_dir.mkdir()
-    zip_path = cache_dir / "pi-windows-x64.zip"
 
-    # Create a minimal zip file
-    with zipfile.ZipFile(zip_path, "w") as z:
-        z.writestr("test.txt", "test content")
+    pinned = {}
+    for key, asset in assets.CATALOG.items():
+        path = cache_dir / asset.name
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("llama-server.exe", key)
+        payload = path.read_bytes()
+        pinned[key] = assets.Asset(
+            name=asset.name,
+            url=asset.url,
+            sha256=hashlib.sha256(payload).hexdigest(),
+            bytes=len(payload),
+        )
 
-    # Tamper with the zip file - change its content
-    zip_path.write_bytes(b"TAMPERED")
+    victim = "llama-vulkan"
+    tampered_name = pinned[victim].name
+    (cache_dir / tampered_name).write_bytes(b"TAMPERED" * 4)
 
-    # layout should verify cache files and reject the tampered one
-    code = stage.main(["layout", "--root", str(tmp_path), "--cache", str(cache_dir), "--skip-vc-runtime"])
+    with mock.patch("assets.CATALOG", pinned):
+        code = stage.main(
+            ["layout", "--root", str(tmp_path), "--cache", str(cache_dir), "--skip-vc-runtime"]
+        )
     assert code == 1
+    stderr = capsys.readouterr().err
+    assert "missing file" not in stderr, f"변조 분기에 닿지 못했다: {stderr}"
+    assert tampered_name in stderr, stderr
+    assert "sha256 mismatch" in stderr or "bytes mismatch" in stderr, stderr
+    assert not (tmp_path / "bin").exists(), "검증 실패 후에도 압축을 풀었다"
 
 
 def test_layout_requires_vc_source_or_skip_flag(tmp_path, capsys):

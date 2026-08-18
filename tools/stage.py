@@ -22,6 +22,7 @@ _TARGETS: dict[str, tuple[str, str]] = {
     "llama-cudart": ("bin/llama-cuda", ""),
     "llama-vulkan": ("bin/llama-vulkan", "vulkan"),
     "llama-cpu": ("bin/llama-cpu", "cpu"),
+    "python-embed": ("bin/python", ""),
 }
 
 

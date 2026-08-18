@@ -3,8 +3,17 @@ from pathlib import Path
 WIN = Path(__file__).resolve().parents[1] / "win"
 
 
+# cmd.exe는 UTF-8(코드페이지 65001) 배치 파일을 읽을 때 줄을 바이트 오프셋으로
+# 다시 찾는다. 비ASCII 문자가 있으면 그 계산이 어긋나 줄 중간부터 명령으로
+# 실행된다. 2026-08-18 윈도우 실측: UTF-8/CRLF config.env를 call하면
+# "'?워'은(는) 내부 또는 외부 명령이 아닙니다" 류 오류가 6건 났고, 같은 내용을
+# CP949로 인코딩하면 한 건도 나지 않았다. 그래서 이 번들의 .bat과 config 계열은
+# CP949로 저장하고 chcp 949로 콘솔 코드페이지를 파일 인코딩에 맞춘다.
+SCRIPT_ENCODING = "cp949"
+
+
 def read(name: str) -> str:
-    return (WIN / name).read_text(encoding="utf-8")
+    return (WIN / name).read_text(encoding=SCRIPT_ENCODING)
 
 
 def test_start_llama_pins_the_required_server_arguments():
@@ -60,9 +69,11 @@ def test_verify_offline_collects_every_required_piece_of_evidence():
         assert required in body, required
 
 
-def test_manifest_verification_is_not_reimplemented_in_powershell():
-    for path in WIN.rglob("*.ps1"):
-        assert "Get-FileHash" not in path.read_text(encoding="utf-8"), path.name
+def test_manifest_verification_is_never_reimplemented_in_powershell():
+    # 검증 규칙은 tools/manifest.py 하나뿐이다. 두 번째 구현이 생기면 둘이
+    # 어긋나도 알 수 없다. .ps1을 순회하는 루프는 .ps1이 하나도 없으면 0회
+    # 돌고 아무것도 증명하지 않으므로, 존재하지 않는다는 사실 자체를 단언한다.
+    assert sorted(path.name for path in WIN.rglob("*.ps1")) == []
 
 
 def test_no_script_mentions_cuda_13():
@@ -110,23 +121,27 @@ def test_config_example_documents_mmproj_file():
     assert "MMPROJ_FILE" in example
 
 
-def test_batch_files_switch_the_console_to_utf8_right_after_echo_off():
-    # 이 시스템의 cmd 기본 코드페이지는 CP949라 UTF-8 .bat의 한글 echo가 깨진다.
-    # chcp 65001이 setlocal보다 앞, @echo off 바로 다음 줄에 있어야 한다.
+def test_batch_files_pin_the_console_codepage_to_the_file_encoding():
+    # 파일은 CP949로 저장한다(SCRIPT_ENCODING 주석 참조). 콘솔 코드페이지가
+    # 그와 다르면 한글 echo가 깨지므로 chcp 949를 @echo off 바로 다음,
+    # setlocal보다 앞에 둔다.
     for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
         body = read(name)
-        assert "chcp 65001" in body, name
+        assert "chcp 949" in body, name
+        assert "chcp 65001" not in body, name
         index_echo_off = body.index("@echo off")
-        index_chcp = body.index("chcp 65001")
+        index_chcp = body.index("chcp 949")
         index_setlocal = body.index("setlocal")
         assert index_echo_off < index_chcp < index_setlocal, name
 
 
-def test_python_callers_pin_utf8_output_encoding():
+def test_python_callers_pin_the_output_encoding_to_the_console_codepage():
+    # 콘솔이 CP949이므로 파이썬 출력도 CP949로 고정한다. utf-8로 두면 한글
+    # 진행 메시지와 evidence\\manifest-check.txt가 깨진다.
     for name in ("start-pi.bat", "verify-offline.bat"):
         body = read(name)
-        assert "PYTHONIOENCODING=utf-8" in body, name
-        index_pin = body.index("PYTHONIOENCODING=utf-8")
+        assert "PYTHONIOENCODING=cp949" in body, name
+        index_pin = body.index("PYTHONIOENCODING=cp949")
         index_python_call = body.index("%PYTHON_CMD%")
         assert index_pin < index_python_call, name
 
@@ -136,3 +151,220 @@ def test_batch_files_carry_no_byte_order_mark():
     for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
         raw = (WIN / name).read_bytes()
         assert not raw.startswith(b"\xef\xbb\xbf"), name
+
+
+def test_batch_files_use_crlf_line_endings():
+    # cmd.exe는 배치 파일을 실행하면서 바이트 오프셋으로 다시 읽는다. 줄바꿈이 LF
+    # 뿐이고 줄에 비ASCII(한글) 문자가 있으면 그 다음 줄부터 파싱이 어긋난다.
+    # 2026-08-18 윈도우 실측: LF 판 start-llama.bat은 config.env 호출과 echo가
+    # 전부 깨졌고("'?라'은(는) 내부 또는 외부 명령이 아닙니다"), 바이트만 CRLF로
+    # 바꾼 같은 파일은 정상 동작했다.
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+        raw = (WIN / name).read_bytes()
+        assert b"\n" in raw, name
+        assert raw.replace(b"\r\n", b"") .count(b"\n") == 0, f"{name}에 CR 없는 LF 줄이 있다"
+
+
+def test_batch_files_that_carry_hangul_must_be_crlf_and_single_byte_safe():
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+        raw = (WIN / name).read_bytes()
+        raw.decode(SCRIPT_ENCODING)  # 선언한 인코딩으로 읽히지 않으면 여기서 터진다
+        for number, line in enumerate(raw.split(b"\r\n"), start=1):
+            assert b"\n" not in line, f"{name}:{number}"
+
+
+# --- B3: 후행 역슬래시가 붙은 %ROOT%를 외부 실행 파일 인자로 넘기지 않는다 ---
+
+def _external_invocation_lines(body: str) -> list[str]:
+    lines = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("rem "):
+            continue
+        if "%PYTHON_CMD%" in stripped or ".exe" in stripped.lower():
+            lines.append(stripped)
+    return lines
+
+
+def test_no_batch_file_passes_a_trailing_backslash_root_to_a_program():
+    # 실측(2026-08-18, 윈도우 CPython):
+    #   --root "C:\\pi_agent\\"   -> ARGV: ['--root', 'C:\\pi_agent"']    (깨짐)
+    #   --root "C:\\pi_agent\\."  -> ARGV: ['--root', 'C:\\pi_agent\\.']  (정상)
+    # %~dp0는 항상 역슬래시로 끝나므로 "%ROOT%"를 그대로 넘기면 닫는 따옴표가
+    # 이스케이프되어 argv가 깨진다.
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert '--root "%ROOT%"' not in body, name
+        for line in _external_invocation_lines(body):
+            assert '"%ROOT%"' not in line, f"{name}: {line}"
+
+
+def test_verify_offline_terminates_the_root_path_before_passing_it():
+    assert '--root "%ROOT%."' in read("verify-offline.bat")
+
+
+# --- B4: verify-offline.bat이 스스로 프로브를 쓰고, 미설정을 거부하고, 루트로 이동한다 ---
+
+def test_verify_offline_writes_the_probe_file_it_asks_the_model_to_read(tmp_path):
+    body = read("verify-offline.bat")
+    assert 'set "PROBE=%EV%\\probe.txt"' in body
+    assert '> "%PROBE%" echo ' in body, "프로브 파일을 스크립트가 직접 쓰지 않는다"
+    index_write = body.index('> "%PROBE%" echo ')
+    index_prompt = body.index("-p \"%PROBE%")
+    assert index_write < index_prompt, "프로브를 쓰기 전에 읽으라고 시킨다"
+    # 프롬프트에는 절대 경로(%PROBE%)가 들어가야 한다. 상대 경로 evidence\probe.txt는 금지.
+    assert "evidence\\probe.txt 파일을" not in body
+
+
+def test_verify_offline_probe_word_is_unique_and_checked_in_the_summary():
+    body = read("verify-offline.bat")
+    marker = "NARWHAL-7Q2X"
+    assert f'> "%PROBE%" echo {marker}' in body
+    # 요약 안내에도 같은 낱말이 나와야 운영자가 무엇을 대조할지 안다.
+    assert body.count(marker) >= 2
+
+
+def test_verify_offline_refuses_to_run_without_the_model_identifiers():
+    body = read("verify-offline.bat")
+    assert "if not defined MODEL_ALIAS" in body
+    assert "if not defined PI_MODEL_ID" in body
+    index_guard = max(body.index("if not defined MODEL_ALIAS"), body.index("if not defined PI_MODEL_ID"))
+    index_pi = body.index("bin\\pi\\pi.exe")
+    assert index_guard < index_pi
+
+
+def test_every_batch_file_moves_to_the_bundle_root_first():
+    # cd가 없으면 상대 경로가 호출 시점의 cwd 기준으로 풀린다.
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert 'cd /d "%ROOT%"' in body, name
+        assert body.index('cd /d "%ROOT%"') < body.index("call :load_config"), name
+
+
+# --- B2: 정적 제공자 선언으로 단일 모델 모드 llama-server를 인식시킨다 ---
+
+def test_models_json_declares_the_local_openai_compatible_provider():
+    import json
+
+    document = json.loads((WIN / "models.json").read_text(encoding="utf-8"))
+    provider = document["providers"]["local"]
+    assert provider["baseUrl"] == "http://127.0.0.1:8080/v1"
+    assert provider["api"] == "openai-completions"
+    assert provider["apiKey"], "키 없는 로컬 서버라도 더미 값이 있어야 /model에 나타난다"
+    # 상류 문서가 Ollama/vLLM 같은 OpenAI 호환 서버에 대해 명시하는 두 플래그.
+    assert provider["compat"]["supportsDeveloperRole"] is False
+    assert provider["compat"]["supportsReasoningEffort"] is False
+    assert [model["id"] for model in provider["models"]] == ["qwen3.8-27b"]
+
+
+def test_models_json_base_url_port_matches_the_configured_default():
+    import json
+    import re
+
+    document = json.loads((WIN / "models.json").read_text(encoding="utf-8"))
+    base_url = document["providers"]["local"]["baseUrl"]
+    example = read("config.env.example")
+    port = re.search(r'set "LLAMA_PORT=(\d+)"', example).group(1)
+    assert f":{port}/" in base_url, "models.json은 환경변수를 읽지 않는다 - 포트가 어긋나면 조용히 실패한다"
+
+
+def test_pi_model_id_is_the_provider_key_joined_to_the_alias():
+    import json
+    import re
+
+    document = json.loads((WIN / "models.json").read_text(encoding="utf-8"))
+    provider_key = next(iter(document["providers"]))
+    model_id = document["providers"][provider_key]["models"][0]["id"]
+    example = read("config.env.example")
+    configured = re.search(r'set "PI_MODEL_ID=([^"]+)"', example).group(1)
+    assert configured == f"{provider_key}/{model_id}"
+
+
+def test_both_pi_callers_refresh_models_json_from_the_verified_root_copy():
+    # 원본은 매니페스트 해시 범위 안(번들 루트)에 있고, 가변 영역인 home\agent\로
+    # 매번 덮어쓴다. 그래야 설정이 항상 검증된 원본에서 나온다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert 'copy /y "%ROOT%models.json" "%PI_CODING_AGENT_DIR%\\models.json"' in body, name
+        assert 'if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"' in body, name
+        assert 'if not exist "%ROOT%models.json"' in body, name
+        # 복사는 서브루틴에 있으므로 실행 순서는 call 위치로 본다.
+        index_call = body.index("call :place_models_json")
+        index_pi = body.index('"%ROOT%bin\\pi\\pi.exe" --offline')
+        assert index_call < index_pi, name
+
+
+def test_pi_is_launched_with_the_provider_qualified_model_id():
+    assert '--model "%PI_MODEL_ID%"' in read("start-pi.bat")
+    assert '--model "%PI_MODEL_ID%"' in read("verify-offline.bat")
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        assert '--model "%MODEL_ALIAS%"' not in read(name), name
+
+
+def test_wait_model_still_polls_the_bare_alias_on_v1_models():
+    # 단일 모델 모드 llama-server의 /v1/models는 --alias 값을 그대로 노출한다.
+    # 제공자 접두사는 Pi 쪽 이름이지 서버 쪽 이름이 아니다.
+    body = read("start-pi.bat")
+    assert '--alias "%MODEL_ALIAS%"' in body
+    assert "/v1/models" not in body  # 엔드포인트는 wait_model.py가 정한다
+
+
+# --- B1: 번들 내장 파이썬을 가장 먼저 쓴다 ---
+
+def test_batch_files_prefer_the_bundled_python_runtime():
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert 'if not exist "%ROOT%bin\\python\\python.exe" goto :resolve_python_system' in body, name
+        assert 'set "PYTHON_CMD="%ROOT%bin\\python\\python.exe""' in body, name
+        index_bundled = body.index("bin\\python\\python.exe")
+        index_py_launcher = body.index("py -3.12")
+        index_bare = body.index("python -c")
+        assert index_bundled < index_py_launcher < index_bare, name
+
+
+def test_user_supplied_python_cmd_still_wins():
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        index_user = body.index("if defined PYTHON_CMD goto :eof")
+        index_bundled = body.index("bin\\python\\python.exe")
+        assert index_user < index_bundled, name
+
+
+# --- Minor 3: 모델 적재 타임아웃을 config.env로 뺀다 ---
+
+def test_model_load_timeout_is_configurable_with_a_600_second_default():
+    body = read("start-pi.bat")
+    assert "--timeout 600" not in body, "타임아웃이 .bat에 하드코딩돼 있다"
+    assert 'if not defined MODEL_LOAD_TIMEOUT set "MODEL_LOAD_TIMEOUT=600"' in body
+    assert "--timeout %MODEL_LOAD_TIMEOUT%" in body
+    assert 'set "MODEL_LOAD_TIMEOUT=600"' in read("config.env.example")
+
+
+def test_config_example_documents_the_new_variables():
+    example = read("config.env.example")
+    for variable in ("PI_MODEL_ID", "PI_PROVIDER", "MODEL_LOAD_TIMEOUT", "PYTHON_CMD"):
+        assert variable in example, variable
+
+
+def test_config_env_is_loaded_through_an_executable_copy():
+    # cmd의 call은 .bat/.cmd 확장자만 배치로 실행한다. `call "...\config.env"`는
+    # 아무 일도 하지 않고 errorlevel 0으로 돌아온다(2026-08-18 윈도우 실측:
+    # config.env의 모든 set이 무시되어 MODEL_ALIAS가 끝내 비어 있었다).
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert 'call "%ROOT%config.env"' not in body, name
+        assert "call :load_config" in body, name
+        assert 'copy /y "%ROOT%config.env" "%ROOT%home\\agent\\config.cmd"' in body, name
+        assert 'call "%ROOT%home\\agent\\config.cmd"' in body, name
+
+
+def test_config_files_are_stored_in_the_declared_script_encoding():
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+        raw = (WIN / name).read_bytes()
+        raw.decode(SCRIPT_ENCODING)
+        if any(byte > 0x7F for byte in raw):
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            raise AssertionError(f"{name}이 UTF-8로도 읽힌다 - CP949로 저장되지 않았다")

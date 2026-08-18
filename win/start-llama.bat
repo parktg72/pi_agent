@@ -1,8 +1,11 @@
 @echo off
-chcp 65001 >nul
+chcp 949 >nul
 setlocal
 set "ROOT=%~dp0"
-if exist "%ROOT%config.env" call "%ROOT%config.env"
+rem »ó´ë °æ·Î°¡ È£Ãâ ½ÃÁ¡ÀÇ cwd°¡ ¾Æ´Ï¶ó ¹øµé ·çÆ®¸¦ ±âÁØÀ¸·Î Ç®¸®°Ô ÇÑ´Ù.
+cd /d "%ROOT%"
+call :load_config
+if errorlevel 1 exit /b 6
 
 if not defined LLAMA_BACKEND set "LLAMA_BACKEND=cuda"
 if not defined LLAMA_PORT set "LLAMA_PORT=8080"
@@ -10,23 +13,23 @@ if not defined LLAMA_CTX set "LLAMA_CTX=32768"
 
 set "LLAMA_DIR=%ROOT%bin\llama-%LLAMA_BACKEND%"
 if not exist "%LLAMA_DIR%\llama-server.exe" (
-  echo [FAIL] %LLAMA_DIR%\llama-server.exe ì—†ìŒ
+  echo [FAIL] %LLAMA_DIR%\llama-server.exe ¾øÀ½
   exit /b 2
 )
 if not defined MODEL_FILE (
-  echo [FAIL] MODEL_FILE ë¯¸ì„¤ì • - config.envë¥¼ ì±„ì›Œë¼
+  echo [FAIL] MODEL_FILE ¹Ì¼³Á¤ - config.env¸¦ Ã¤¿ö¶ó
   exit /b 2
 )
 if not defined MODEL_ALIAS (
-  echo [FAIL] MODEL_ALIAS ë¯¸ì„¤ì • - config.envë¥¼ ì±„ì›Œë¼
+  echo [FAIL] MODEL_ALIAS ¹Ì¼³Á¤ - config.env¸¦ Ã¤¿ö¶ó
   exit /b 2
 )
 if not exist "%ROOT%models\%MODEL_FILE%" (
-  echo [FAIL] %ROOT%models\%MODEL_FILE% ì—†ìŒ
+  echo [FAIL] %ROOT%models\%MODEL_FILE% ¾øÀ½
   exit /b 2
 )
 if defined MMPROJ_FILE if not exist "%ROOT%models\%MMPROJ_FILE%" (
-  echo [FAIL] %ROOT%models\%MMPROJ_FILE% ì—†ìŒ
+  echo [FAIL] %ROOT%models\%MMPROJ_FILE% ¾øÀ½
   exit /b 2
 )
 
@@ -36,7 +39,7 @@ if defined GPU_TENSOR_SPLIT set "TS_ARG=-ts %GPU_TENSOR_SPLIT%"
 set "MMPROJ_ARG="
 if defined MMPROJ_FILE set MMPROJ_ARG=--mmproj "%ROOT%models\%MMPROJ_FILE%"
 
-echo [info] %LLAMA_BACKEND% ë°±ì—”ë“œë¡œ %MODEL_FILE% ë¥¼ %MODEL_ALIAS% ë¡œ ì˜¬ë¦°ë‹¤
+echo [info] %LLAMA_BACKEND% ¹é¿£µå·Î %MODEL_FILE% ¸¦ %MODEL_ALIAS% ·Î ¿Ã¸°´Ù
 "%LLAMA_DIR%\llama-server.exe" ^
   -m "%ROOT%models\%MODEL_FILE%" ^
   --alias "%MODEL_ALIAS%" ^
@@ -48,3 +51,19 @@ echo [info] %LLAMA_BACKEND% ë°±ì—”ë“œë¡œ %MODEL_FILE% ë¥¼ %MODEL_ALIAS% ë¡œ ì˜¬ë
   --parallel 1 ^
   -sm layer %TS_ARG% %MMPROJ_ARG%
 exit /b %errorlevel%
+
+:load_config
+rem cmdÀÇ callÀº .bat/.cmd È®ÀåÀÚ¸¸ ¹èÄ¡·Î ½ÇÇàÇÑ´Ù. .env¸¦ ±×´ë·Î callÇÏ¸é
+rem ¾Æ¹« ÀÏµµ ÇÏÁö ¾Ê°í errorlevel 0À¸·Î µ¹¾Æ¿Â´Ù - 2026-08-18 À©µµ¿ì ½ÇÃø:
+rem config.envÀÇ ¸ðµç setÀÌ ¹«½ÃµÇ¾î MODEL_ALIAS°¡ ³¡³» ºñ¾î ÀÖ¾ú´Ù.
+rem ¿î¿µÀÚ¿¡°Ô ÀÍ¼÷ÇÑ ÆÄÀÏ¸íÀ» À¯ÁöÇÏ¸é¼­ ½ÇÁ¦·Î ½ÇÇàµÇ°Ô ÇÏ·Á°í, °¡º¯ ¿µ¿ª¿¡
+rem .cmd »çº»À» ¸¸µé¾î ±×°ÍÀ» callÇÑ´Ù. »çº»Àº ¸Å¹ø ¿øº»¿¡¼­ ´Ù½Ã ¸¸µç´Ù.
+if not exist "%ROOT%config.env" goto :eof
+if not exist "%ROOT%home\agent" mkdir "%ROOT%home\agent"
+copy /y "%ROOT%config.env" "%ROOT%home\agent\config.cmd" >nul
+if errorlevel 1 (
+  echo [FAIL] config.env¸¦ ½ÇÇà °¡´ÉÇÑ »çº»À¸·Î º¹»çÇÏÁö ¸øÇß´Ù
+  exit /b 1
+)
+call "%ROOT%home\agent\config.cmd"
+goto :eof
