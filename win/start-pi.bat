@@ -2,7 +2,6 @@
 chcp 949 >nul
 setlocal
 set "ROOT=%~dp0"
-cd /d "%ROOT%"
 call :load_config
 if errorlevel 1 exit /b 6
 if not defined LLAMA_PORT set "LLAMA_PORT=8080"
@@ -38,6 +37,13 @@ if errorlevel 1 (
   echo [FAIL] 모델이 준비되지 않았다 - Pi를 시작하지 않는다
   exit /b 3
 )
+
+rem LLAMA_BASE_URL이 남아 있으면 pi.exe 내장 llama.cpp 제공자가 인증된 것으로
+rem 취급되어 모델 목록에 살아난다. 그 제공자는 라우터 API로 모델을 열거하므로
+rem "Server is not running in llama.cpp router mode"를 뱉는다 - models.json
+rem 정적 제공자로 우회하려던 바로 그 실패다. wait_model.py가 끝났으니 이제
+rem 이 변수는 필요 없다(원래도 --base-url 인자로 받아 필수는 아니었다).
+set "LLAMA_BASE_URL="
 
 "%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" %*
 exit /b %errorlevel%

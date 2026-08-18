@@ -193,6 +193,15 @@ mode`, 동봉 `bin\pi\docs\llama-cpp.md`도 "Start `llama-server` without
    ```
    **기대 결과:** 목록에 `local/qwen3.8-27b`가 나타난다. 나타나지 않으면
    관문 ③으로 넘어가지 마라 — 원인이 여기 있다.
+
+   **이 명령을 손으로 직접 칠 때만 해당하는 주의:** 여기서 `LLAMA_BASE_URL`을
+   일부러 설정하는 것은 `--list-models`가 내장 llama.cpp 제공자까지 함께
+   나열하게 하려는 의도다 — 그 제공자는 라우터 API로 모델을 열거하므로
+   같은 콘솔 출력 안에 `Server is not running in llama.cpp router mode`가
+   **같이 나타나는 것이 정상**이다. 이건 §5.1이 고친 결함의 재발이
+   아니다 — `local/qwen3.8-27b`가 목록에 있는지만 보면 된다. (`start-pi.bat`과
+   `verify-offline.bat`은 이 변수를 `pi.exe` 호출 직전에 지우므로 실제
+   운영 경로에서는 이 문자열이 나오지 않는다 — 2026-08-18 재리뷰.)
 3. `config.env`의 `PI_MODEL_ID`가 위 출력과 **글자 그대로** 같은지 대조한다.
    `start-pi.bat`은 이 값을 `--model`로 그대로 넘긴다.
 
@@ -268,13 +277,23 @@ start-pi.bat
 - 모델 ID 불일치 오류 → `config.env`의 `PI_MODEL_ID`(Pi의 `--model`,
   `local/qwen3.8-27b`)와 `MODEL_ALIAS`(llama-server의 `--alias`,
   `qwen3.8-27b`)가 어긋난 것. 뒷부분이 글자 그대로 같아야 한다.
-- **`Server is not running in llama.cpp router mode`** → 이번 웨이브가
-  고친 바로 그 결함이 재발한 것이다(스펙 §5.1). Pi가 우리 `local` 정적
-  제공자가 아니라 내장 llama.cpp 제공자로 라우팅됐다는 뜻이다. 순서대로
-  확인한다: (1) `home\agent\models.json`이 실제로 놓였는가, (2) 그 JSON이
-  유효하고 `providers.local`을 담고 있는가, (3) `--model`에 제공자 접두사
-  `local/`이 붙어 나갔는가(`PI_MODEL_ID` 확인), (4) `models.json`의
-  `baseUrl` 포트가 `LLAMA_PORT`와 같은가. **여기서 라우터 모드
+- **`Server is not running in llama.cpp router mode`** → `start-pi.bat`으로
+  뜬 관문 ③ 콘솔에서 이 문자열이 나오면 이번 웨이브가 고친 바로 그 결함이
+  재발한 것이다(스펙 §5.1). Pi가 우리 `local` 정적 제공자가 아니라 내장
+  llama.cpp 제공자로 라우팅됐다는 뜻이다. 순서대로 확인한다: (1)
+  `home\agent\models.json`이 실제로 놓였는가, (2) 그 JSON이 유효하고
+  `providers.local`을 담고 있는가, (3) `--model`에 제공자 접두사 `local/`이
+  붙어 나갔는가(`PI_MODEL_ID` 확인), (4) `models.json`의 `baseUrl` 포트가
+  `LLAMA_PORT`와 같은가, (5) `LLAMA_BASE_URL`이 `pi.exe` 호출 전에 지워졌는가
+  — `start-pi.bat`·`verify-offline.bat`은 모델 대기가 끝난 뒤 `pi.exe`를
+  부르기 직전에 `set "LLAMA_BASE_URL="`으로 지운다(2026-08-18 재리뷰). 이
+  변수가 남아 있으면 내장 llama.cpp 제공자가 인증된 것으로 취급되어 모델
+  목록에 살아나고, 그 제공자가 같은 오류 문자열을 낸다 — 단, 이때는 우리
+  `local` 정적 제공자가 아니라 그 곁에 **함께** 나타난 내장 제공자가 낸
+  것이므로 관문 ③ 자체(도구 왕복)와는 무관할 수 있다. §5에서 사람이 직접
+  `set "LLAMA_BASE_URL=..."` 뒤에 `--list-models`를 돌릴 때는 이 문자열이
+  나오는 것이 정상이며 결함 재발이 아니다 — 거기서는 내장 제공자를 일부러
+  드러내 보이려는 것이기 때문이다. **여기서 라우터 모드
   (`--models-dir`)로 바꾸지 마라** — 무인 기동의 결정성과 mmproj 평면
   배치 결정을 함께 깨뜨린다(스펙 §5.1, §6).
 - 파이썬 관련 오류(`Python을 찾지 못했다`, import 실패) → §0의 파이썬

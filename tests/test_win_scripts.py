@@ -233,12 +233,29 @@ def test_verify_offline_refuses_to_run_without_the_model_identifiers():
     assert index_guard < index_pi
 
 
-def test_every_batch_file_moves_to_the_bundle_root_first():
+def test_batch_files_that_still_need_the_bundle_root_move_there_first():
     # cd가 없으면 상대 경로가 호출 시점의 cwd 기준으로 풀린다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+    # start-pi.bat은 여기서 제외한다 - 아래 test_start_pi_does_not_change_directory 참고.
+    for name in ("start-llama.bat", "verify-offline.bat"):
         body = read(name)
         assert 'cd /d "%ROOT%"' in body, name
         assert body.index('cd /d "%ROOT%"') < body.index("call :load_config"), name
+
+
+def test_start_pi_does_not_change_directory():
+    # 2026-08-18 재리뷰: start-pi.bat의 모든 경로는 이미 %ROOT% 절대 경로라
+    # cd가 사 주는 것이 없는데, Pi 자신의 문서(bin/pi/docs/security.md,
+    # usage.md)는 프로젝트 컨텍스트·트러스트 판정·세션 저장 위치를 cwd
+    # 기준으로 잡는다고 명시한다. start-pi.bat은 운영자의 상시 진입점이므로
+    # cd가 있으면 어느 폴더에서 실행하든 항상 번들 루트가 작업 프로젝트가
+    # 되어, 정작 코딩 대상 폴더를 Pi가 보지 못한다. "빠졌다"고 되돌리지 마라 -
+    # 의도적 제거다. verify-offline.bat과 start-llama.bat은 cd를 그대로
+    # 유지한다: 둘 다 pi.exe처럼 cwd를 트러스트 판정에 쓰는 문서가 없고,
+    # start-llama.bat이 띄우는 llama-server.exe는 상시 진입점이 아니라 창을
+    # 띄운 채 계속 사는 백그라운드 서버라 실행 폴더가 운영자 작업 폴더와
+    # 섞일 일이 없다 - 이 좁은 수정의 범위 밖이라 건드리지 않았다.
+    body = read("start-pi.bat")
+    assert 'cd /d "%ROOT%"' not in body
 
 
 # --- B2: 정적 제공자 선언으로 단일 모델 모드 llama-server를 인식시킨다 ---
@@ -368,3 +385,22 @@ def test_config_files_are_stored_in_the_declared_script_encoding():
             except UnicodeDecodeError:
                 continue
             raise AssertionError(f"{name}이 UTF-8로도 읽힌다 - CP949로 저장되지 않았다")
+
+
+# --- 2026-08-18 재리뷰: pi.exe를 띄우기 전에 LLAMA_BASE_URL을 지운다 ---
+
+def test_llama_base_url_is_cleared_before_launching_pi():
+    # LLAMA_BASE_URL이 설정된 채로 pi.exe가 뜨면 내장 llama.cpp 제공자가
+    # 인증된 것으로 취급되어 모델 목록에 살아난다. 그 제공자는 라우터 API로
+    # 모델을 열거하므로 "Server is not running in llama.cpp router mode"를
+    # 뱉는다 - models.json 정적 제공자로 우회하려던 바로 그 실패의 재발이다.
+    # 이 변수를 실제로 읽는 곳은 wait_model.py뿐이고(그마저 --base-url
+    # 인자로도 받으므로 환경변수가 꼭 필요하지 않다), pi.exe 호출 전에는
+    # 지운다. bin\\pi\\pi.exe는 start-pi.bat의 존재 확인에서 먼저 한 번 더
+    # 나오므로(기존 테스트가 쓰는 방식을 따라) 마지막 출현을 기준으로 본다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert 'set "LLAMA_BASE_URL="' in body, name
+        index_clear = body.index('set "LLAMA_BASE_URL="')
+        index_pi_launch = body.rindex("bin\\pi\\pi.exe")
+        assert index_clear < index_pi_launch, name

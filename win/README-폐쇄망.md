@@ -10,6 +10,9 @@
 3. `nvidia-smi` 로 GPU별 여유 VRAM을 보고 `GPU_TENSOR_SPLIT` 을 정한다. 비워두면 기본 분배를 쓴다. `1,1,1` 로 고정하지 않는다.
 4. 창 하나에서 `start-llama.bat` 을 실행한다. 이 창은 서버가 사는 곳이므로 닫지 않는다.
 5. 다른 창에서 `start-pi.bat` 을 실행한다. 모델이 준비되기 전에는 Pi가 뜨지 않는다.
+   Pi는 **실행한 폴더를 작업 프로젝트로 삼으므로**, 코딩할 폴더로 먼저
+   이동한 뒤 `C:\pi_agent\start-pi.bat` 을 절대 경로로 호출하라 — 번들 루트
+   안에서 실행하면 그 폴더 자신이 작업 프로젝트가 되어 버린다.
 6. `verify-offline.bat` 을 실행해 `evidence\` 에 증거를 남긴다.
 
 `config.env` 는 현장에서 값을 채우는 파일이라 `STAGING_MANIFEST.json` 의 해시

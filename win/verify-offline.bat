@@ -52,6 +52,12 @@ rem 프로브 파일은 이 스크립트가 직접 쓴다. 없는 파일을 읽으라고 시키면
 rem 툴 왕복 증거가 통째로 날아간다. 프롬프트에는 절대 경로로 넘긴다.
 set "PROBE=%EV%\probe.txt"
 > "%PROBE%" echo NARWHAL-7Q2X
+rem LLAMA_BASE_URL이 설정된 채로 pi.exe를 띄우면 내장 llama.cpp 제공자가
+rem 인증된 것으로 취급되어 모델 목록에 살아난다. 그 제공자는 라우터 API로
+rem 모델을 열거하므로 "Server is not running in llama.cpp router mode"를
+rem 뱉는다 - models.json 정적 제공자로 우회하려던 바로 그 실패다. 이
+rem 스크립트는 wait_model.py를 쓰지 않으므로 이 변수가 애초에 필요 없다.
+set "LLAMA_BASE_URL="
 "%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --tools read --mode json -p "%PROBE% 파일을 read 도구로 읽고 그 안에 적힌 낱말을 그대로 답하라" > "%EV%\pi-tool-roundtrip.json" 2>&1
 type "%EV%\pi-tool-roundtrip.json"
 
