@@ -5,16 +5,57 @@
 - 이 번들은 한 사용자 계정 전용이다. `home\agent` 에 세션과 툴 출력이 쌓이고 여기에는 작업한 소스 내용이 남는다.
 
 ## 순서
-1. 번들을 `C:\pi_agent` 로 복사한다.
-2. `config.env.example` 을 `config.env` 로 복사하고 `MODEL_FILE`, `MODEL_ALIAS`, `PI_MODEL_ID` 를 채운다.
-3. `nvidia-smi` 로 GPU별 여유 VRAM을 보고 `GPU_TENSOR_SPLIT` 을 정한다. 비워두면 기본 분배를 쓴다. `1,1,1` 로 고정하지 않는다.
-4. 창 하나에서 `start-llama.bat` 을 실행한다. 이 창은 서버가 사는 곳이므로 닫지 않는다.
-5. 다른 창에서 `start-pi.bat` 을 실행한다. 모델이 준비되기 전에는 Pi가 뜨지 않는다.
-   Pi는 **실행한 폴더를 작업 프로젝트로 삼으므로**, 코딩할 폴더로 먼저
-   이동한 뒤 `C:\pi_agent\start-pi.bat` 을 절대 경로로 호출하라 — 번들 루트
-   안에서 실행하면 그 폴더 자신이 작업 프로젝트가 되어 버린다.
-6. `verify-offline.bat` 을 실행해 `evidence\` 에 증거를 남긴다. 확장·스킬 4종이
-   실제로 붙었는지는 `evidence\pi-packages.txt`(=`pi list` 출력)로 확인한다.
+
+| # | 실행할 것 | 언제 | 창 |
+|---|---|---|---|
+| 0 | 번들을 `C:\pi_agent` 로 복사 | 최초 1회 | — |
+| 1 | `bin\python\python.exe tools\verify_bundle.py --root .` | 최초 1회 | 아무 창 |
+| 2 | `config.env` 의 `GPU_TENSOR_SPLIT` 채우기 | 최초 1회 | — |
+| 3 | `install-python-packages.bat` | 파이썬 작업이 필요할 때만 | 아무 창 |
+| 4 | `start-llama.bat` | **매번**, 가장 먼저 | 전용 창 — 닫지 않는다 |
+| 5 | `start-pi.bat` | **매번**, 4번 다음 | 작업 폴더에서 |
+| 6 | `verify-offline.bat` | 최초 1회 + 문제 생겼을 때 | 아무 창 |
+
+**매번 반복되는 것은 4→5 둘뿐이다.** 나머지는 처음 한 번이다.
+
+**1 — 무결성 검사가 먼저다.** 전송 중 손상은 여기서만 잡힌다. 출력의 파일 수가
+`STAGING_MANIFEST.json` 의 `totals.files` 와 같아야 한다. 다르면 **거기서 멈추고
+다시 복사한다** — 뒤 단계는 전부 무의미해진다.
+
+**2 — 현장에서 채울 값은 `GPU_TENSOR_SPLIT` 하나다.** 나머지(`MODEL_FILE`,
+`MODEL_ALIAS`, `PI_MODEL_ID`, `MMPROJ_FILE`, `MODEL_LOAD_TIMEOUT`)는 반입 시점에
+이미 채워져 있다. `nvidia-smi` 로 GPU별 여유 VRAM을 보고 그 비율을 넣는다.
+비워두면 llama.cpp 기본 분배를 쓴다. `1,1,1` 로 고정하지 않는다 — 디스플레이가
+붙은 GPU의 실여유가 다른 두 장보다 적다.
+
+**3 — 기본이 격리 설치다.** 인자 없이 실행하면 `C:\pi_agent\.venv` 에 깔린다.
+`--user` 는 그 계정의 **모든** Python 3.12 에 영향을 준다(아래 "왜 격리가
+기본인가" 참고). 코딩 에이전트만 쓸 거면 이 단계는 건너뛰어도 된다.
+
+**4 — 이 창은 서버가 사는 곳이므로 닫지 않는다.**
+
+**5 — 코딩할 폴더에서 절대 경로로 부른다.**
+
+```
+cd D:\작업폴더
+C:\pi_agent\start-pi.bat
+```
+
+Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 안에서 실행하면
+`C:\pi_agent` 자신이 프로젝트가 되어 정작 작업 대상을 못 본다. 모델이
+준비되기 전에는 Pi가 뜨지 않으므로, 4번을 건너뛰면 여기서 기다리다 실패한다.
+
+**6 — 판정은 종료 코드가 아니라 `evidence\` 안의 내용이다.** 넷을 확인한다.
+
+| 파일 | 통과 기준 |
+|---|---|
+| `manifest-check.txt` | 매니페스트와 일치 |
+| `v1-models.json` | `qwen3.8-27b` 가 있다 |
+| `pi-tool-roundtrip.json` | 최종 답변에 `NARWHAL-7Q2X` 가 있다 |
+| `pi-packages.txt` | 확장·스킬 4종이 나열된다 |
+
+`pi-tool-roundtrip.json` 의 낱말은 스크립트가 직접 쓴 프로브 파일에서 온다 —
+모델이 파일을 못 읽고 지어냈다면 그 낱말이 나올 수 없다.
 
 `config.env` 는 현장에서 값을 채우는 파일이라 `STAGING_MANIFEST.json` 의 해시
 범위에서 **제외**돼 있다. 값을 고쳐도 `verify-offline.bat` 의 무결성 검사는
