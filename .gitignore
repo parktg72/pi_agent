@@ -7,6 +7,17 @@ home/
 evidence/
 
 # 스테이징 산출물
+.cache/
+.pytest_cache/
 *.zip
 *.gguf
 STAGING_MANIFEST.json
+
+# win/ 에서 번들 루트로 복사되는 사본 (원본만 추적한다)
+/start-llama.bat
+/start-pi.bat
+/verify-offline.bat
+/config.env
+/config.env.example
+/tools-win/
+/README-폐쇄망.md
