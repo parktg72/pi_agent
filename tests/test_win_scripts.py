@@ -74,3 +74,31 @@ def test_config_example_documents_every_variable_the_scripts_read():
     example = read("config.env.example")
     for variable in ("LLAMA_BACKEND", "LLAMA_PORT", "LLAMA_CTX", "MODEL_FILE", "MODEL_ALIAS", "GPU_TENSOR_SPLIT"):
         assert variable in example, variable
+
+
+def test_batch_files_switch_the_console_to_utf8_right_after_echo_off():
+    # 이 시스템의 cmd 기본 코드페이지는 CP949라 UTF-8 .bat의 한글 echo가 깨진다.
+    # chcp 65001이 setlocal보다 앞, @echo off 바로 다음 줄에 있어야 한다.
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert "chcp 65001" in body, name
+        index_echo_off = body.index("@echo off")
+        index_chcp = body.index("chcp 65001")
+        index_setlocal = body.index("setlocal")
+        assert index_echo_off < index_chcp < index_setlocal, name
+
+
+def test_python_callers_pin_utf8_output_encoding():
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert "PYTHONIOENCODING=utf-8" in body, name
+        index_pin = body.index("PYTHONIOENCODING=utf-8")
+        index_python_call = body.index("%PYTHON_CMD%")
+        assert index_pin < index_python_call, name
+
+
+def test_batch_files_carry_no_byte_order_mark():
+    # BOM은 cmd.exe에서 @echo off를 포함한 첫 줄을 깨뜨린다.
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+        raw = (WIN / name).read_bytes()
+        assert not raw.startswith(b"\xef\xbb\xbf"), name

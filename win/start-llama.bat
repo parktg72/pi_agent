@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 set "ROOT=%~dp0"
 if exist "%ROOT%config.env" call "%ROOT%config.env"

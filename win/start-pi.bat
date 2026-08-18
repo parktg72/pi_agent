@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 set "ROOT=%~dp0"
 if exist "%ROOT%config.env" call "%ROOT%config.env"
@@ -20,6 +21,7 @@ if not defined MODEL_ALIAS (
 call :resolve_python
 if errorlevel 1 exit /b 4
 
+set "PYTHONIOENCODING=utf-8"
 %PYTHON_CMD% "%ROOT%tools\wait_model.py" --base-url "%LLAMA_BASE_URL%" --alias "%MODEL_ALIAS%" --timeout 600
 if errorlevel 1 (
   echo [FAIL] 모델이 준비되지 않았다 - Pi를 시작하지 않는다

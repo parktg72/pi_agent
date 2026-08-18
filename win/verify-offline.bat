@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal enabledelayedexpansion
 set "ROOT=%~dp0"
 if exist "%ROOT%config.env" call "%ROOT%config.env"
@@ -13,6 +14,7 @@ type "%EV%\nvidia-smi.txt"
 echo [2/6] 번들 무결성
 call :resolve_python
 if errorlevel 1 exit /b 4
+set "PYTHONIOENCODING=utf-8"
 %PYTHON_CMD% "%ROOT%tools\verify_bundle.py" --root "%ROOT%" > "%EV%\manifest-check.txt" 2>&1
 type "%EV%\manifest-check.txt"
 
