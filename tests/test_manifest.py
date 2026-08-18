@@ -74,3 +74,22 @@ def test_verify_detects_truncation_without_hashing(tmp_path):
     problems = manifest.verify(root, doc)
     assert any("size mismatch: models/m.gguf" == p for p in problems)
     assert not any("hash mismatch: models/m.gguf" == p for p in problems)
+
+
+def test_superpowers_sdd_is_excluded_from_manifest(tmp_path):
+    root = make_bundle(tmp_path)
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="H:\\model\\pi_agent")
+    listed = {entry["relative"] for entry in doc["files"]}
+
+    (root / ".superpowers" / "sdd" / "plan").mkdir(parents=True)
+    (root / ".superpowers" / "sdd" / "plan" / "progress.md").write_text("# Task 8b")
+    (root / ".superpowers" / "sdd" / "agent").mkdir(parents=True)
+    (root / ".superpowers" / "sdd" / "agent" / "report.txt").write_text("findings")
+
+    doc2 = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="H:\\model\\pi_agent")
+    listed2 = {entry["relative"] for entry in doc2["files"]}
+    assert listed == listed2, "manifest should not include .superpowers even if new files appear"
+    assert doc2["totals"]["files"] == doc["totals"]["files"], "file count should be unchanged"
+
+    problems = manifest.verify(root, doc)
+    assert not any(p for p in problems if ".superpowers" in p), "verify should ignore .superpowers changes"

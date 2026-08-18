@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterator
 
 SCHEMA = "pi_agent.closed_network_stage.v1"
-EXCLUDED_ROOTS = ("home", "evidence", "docs", "tests", "win", ".git", ".cache", ".pytest_cache")
+EXCLUDED_ROOTS = ("home", "evidence", "docs", "tests", "win", ".git", ".cache", ".pytest_cache", ".superpowers")
 EXCLUDED_FILES = ("STAGING_MANIFEST.json", ".gitignore")
 _CHUNK = 1024 * 1024
 
