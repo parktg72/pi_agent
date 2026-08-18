@@ -45,19 +45,40 @@ def _fetch(root: Path, cache: Path) -> int:
     return 0
 
 
-def _layout(root: Path, cache: Path, vc_source: Path | None) -> int:
+def _layout(root: Path, cache: Path, vc_source: Path | None, skip_vc_runtime: bool) -> int:
     problems: list[str] = []
+
+    # Verify cache files before extracting
+    for key, asset in sorted(assets.CATALOG.items()):
+        cache_file = cache / asset.name
+        verify_problems = assets.verify_downloaded(cache_file, asset)
+        if verify_problems:
+            for problem in verify_problems:
+                print(f"[FAIL] {problem}", file=sys.stderr)
+            return 1
+
+    # Extract verified files
     for key, asset in sorted(assets.CATALOG.items()):
         relative, backend = _TARGETS[key]
         destination = root / relative
         layout.extract(cache / asset.name, destination)
         print(f"[ok] {asset.name} -> {relative}")
+
+    # Check backend directories
     for key, (relative, backend) in sorted(_TARGETS.items()):
         if backend:
             problems += layout.check_backend_dir(root / relative, backend)
-    if vc_source is not None:
+
+    # Handle VC++ runtime
+    if not skip_vc_runtime:
+        if vc_source is None:
+            print("[FAIL] --vc-source를 제공하거나 --skip-vc-runtime을 명시하라", file=sys.stderr)
+            return 1
         for relative in sorted({rel for rel, backend in _TARGETS.values() if backend}):
             problems += layout.place_vc_runtime(vc_source, root / relative)
+    else:
+        print("[warn] VC++ 런타임을 배치하지 않았다 - 대상 PC에 이미 설치되어 있어야 한다")
+
     for problem in problems:
         print(f"[FAIL] {problem}", file=sys.stderr)
     return 1 if problems else 0
@@ -99,21 +120,34 @@ def _model_check(root: Path) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="stage")
     parser.add_argument("command", choices=["fetch", "layout", "manifest", "verify", "model-check"])
-    parser.add_argument("--root", default="/mnt/h/model/pi_agent")
-    parser.add_argument("--cache", default="/mnt/h/model/pi_agent/.cache")
+    parser.add_argument("--root", required=True)
+    parser.add_argument("--cache", default=None)
     parser.add_argument("--target", default="H:\\model\\pi_agent")
     parser.add_argument("--vc-source", default=None)
+    parser.add_argument("--skip-vc-runtime", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.root)
-    cache = Path(args.cache)
+
     if args.command == "fetch":
+        if args.cache is None:
+            print("[FAIL] fetch는 --cache를 요구한다", file=sys.stderr)
+            return 1
+        cache = Path(args.cache)
         return _fetch(root, cache)
+
     if args.command == "layout":
-        return _layout(root, cache, Path(args.vc_source) if args.vc_source else None)
+        if args.cache is None:
+            print("[FAIL] layout은 --cache를 요구한다", file=sys.stderr)
+            return 1
+        cache = Path(args.cache)
+        return _layout(root, cache, Path(args.vc_source) if args.vc_source else None, args.skip_vc_runtime)
+
     if args.command == "manifest":
         return _manifest(root, args.target)
+
     if args.command == "verify":
         return _verify(root)
+
     return _model_check(root)
 
 

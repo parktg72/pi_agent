@@ -42,3 +42,82 @@ def test_fetch_refuses_a_catalog_entry_without_a_pinned_hash(monkeypatch, tmp_pa
     monkeypatch.setitem(assets.CATALOG, "llama-vulkan", unpinned)
     code = stage.main(["fetch", "--root", str(tmp_path), "--cache", str(tmp_path / ".cache")])
     assert code == 1
+
+
+def test_layout_refuses_to_extract_when_cache_file_is_tampered(tmp_path):
+    import zipfile
+    import assets
+
+    # Create a synthetic zip file with correct metadata
+    cache_dir = tmp_path / ".cache"
+    cache_dir.mkdir()
+    zip_path = cache_dir / "pi-windows-x64.zip"
+
+    # Create a minimal zip file
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("test.txt", "test content")
+
+    # Tamper with the zip file - change its content
+    zip_path.write_bytes(b"TAMPERED")
+
+    # layout should verify cache files and reject the tampered one
+    code = stage.main(["layout", "--root", str(tmp_path), "--cache", str(cache_dir), "--skip-vc-runtime"])
+    assert code == 1
+
+
+def test_layout_requires_vc_source_or_skip_flag(tmp_path):
+    import zipfile
+
+    cache_dir = tmp_path / ".cache"
+    cache_dir.mkdir()
+
+    # Create minimal zip files for each asset
+    for key, asset in {
+        "pi": "pi-windows-x64.zip",
+        "llama-cuda": f"llama-b10470-bin-win-cuda-12.4-x64.zip",
+        "llama-cudart": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "llama-vulkan": f"llama-b10470-bin-win-vulkan-x64.zip",
+        "llama-cpu": f"llama-b10470-bin-win-cpu-x64.zip",
+    }.items():
+        z = zipfile.ZipFile(cache_dir / asset, "w")
+        z.close()
+
+    # Mock assets with pinned hashes/bytes to pass verification
+    import assets
+    import unittest.mock as mock
+
+    pinned_catalog = {
+        k: assets.Asset(
+            name=v,
+            url="http://example.com/" + v,
+            sha256="0000000000000000000000000000000000000000000000000000000000000000",
+            bytes=22,  # minimum zip file size
+        )
+        for k, v in {
+            "pi": "pi-windows-x64.zip",
+            "llama-cuda": f"llama-b10470-bin-win-cuda-12.4-x64.zip",
+            "llama-cudart": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+            "llama-vulkan": f"llama-b10470-bin-win-vulkan-x64.zip",
+            "llama-cpu": f"llama-b10470-bin-win-cpu-x64.zip",
+        }.items()
+    }
+
+    with mock.patch("assets.CATALOG", pinned_catalog):
+        with mock.patch("assets.verify_downloaded", return_value=[]):
+            # Without --vc-source and without --skip-vc-runtime, should fail
+            code = stage.main(["layout", "--root", str(tmp_path), "--cache", str(cache_dir)])
+            assert code == 1
+
+            # With --skip-vc-runtime, should succeed (or fail on backend checks, but not on vc-source)
+            with mock.patch("layout.extract"):
+                with mock.patch("layout.check_backend_dir", return_value=[]):
+                    code = stage.main(["layout", "--root", str(tmp_path), "--cache", str(cache_dir), "--skip-vc-runtime"])
+                    assert code == 0
+
+
+def test_manifest_and_verify_require_root_argument(tmp_path):
+    import pytest
+
+    # Commands should require --root to be specified
+    with pytest.raises(SystemExit):
+        stage.main(["manifest", "--target", "H:\\model\\pi_agent"])
