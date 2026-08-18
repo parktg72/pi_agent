@@ -245,14 +245,23 @@ install-python-packages.bat --user   (전역 사용자 site-packages 에 설치)
 
 ### lightgbm과 VC 런타임
 
-`lightgbm` 휠 안의 `lib_lightgbm.dll` 은 `VCOMP140.DLL`(OpenMP)과
-`MSVCP140.dll` 을 요구하는데 그 휠은 둘 다 동봉하지 않는다(scikit-learn은
-`sklearn\.libs\` 에 자체 동봉해서 무사하다). 번들의 VC 런타임 3종은
-`bin\llama-*\` 안에 app-local로 놓여 있어 파이썬 프로세스의 검색 경로에
-없다. 그래서 `packages_win\vcruntime\` 에 이 두 DLL을 따로 실어 왔고,
-설치 스크립트가 설치된 `lightgbm\bin\` 옆에 같은 app-local 방식으로
-복사한다. 설치 위치는 격리/`--user` 에 따라 다르므로 파이썬에게 직접 물어
-찾는다.
+`lightgbm` 휠 안의 `lib_lightgbm.dll` 의 실제 import 테이블에는 `MSVCP140.dll`,
+`VCOMP140.DLL`(OpenMP), `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` 4종이 있는데
+(실측, 2026-08-18) 휠은 이 중 무엇도 동봉하지 않는다(scikit-learn은
+`sklearn\.libs\` 에 4종을 전부 자체 동봉해서 무사하다). **우리가 반입한 것은
+앞의 2종(`VCOMP140.DLL`, `MSVCP140.dll`)뿐이다** — 번들의 VC 런타임 3종
+(`bin\llama-*\` 안 app-local)은 파이썬 프로세스의 검색 경로에 없어서 쓸 수
+없다. 나머지 `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` 2종은 대상 PC의
+**시스템 Python 3.12 설치본**이 `Python312\VCRUNTIME140.dll`(과 짝 파일)로
+동봉하는 것을 그대로 쓴다(로드 경로 실측 확인, 2026-08-18). 위험은 낮지만
+이 전제에 기댄다 — Python 3.12를 표준 python.org 설치본이 아닌 다른 경로
+(VC 런타임을 자체 동봉하지 않는 포터블 배포 등)로 넣으면 이 두 DLL이 없을
+수 있고, 그러면 `import lightgbm` 이전에 OS 로더 단계에서 실패한다.
+
+그래서 `packages_win\vcruntime\` 에는 우리가 반입해야 하는 2종
+(`VCOMP140.DLL`, `MSVCP140.dll`)만 실어 왔고, 설치 스크립트가 설치된
+`lightgbm\bin\` 옆에 같은 app-local 방식으로 복사한다. 설치 위치는
+격리/`--user` 에 따라 다르므로 파이썬에게 직접 물어 찾는다.
 
 **실패 시 볼 곳**: 종료 코드가 아니라 `evidence\` 의 두 파일이 판정 기준이다.
 - `evidence\python-packages-install.txt` — pip 설치 로그 전체. 마지막 줄이

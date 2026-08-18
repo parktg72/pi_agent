@@ -168,7 +168,7 @@ if errorlevel 1 (
 %CHECK_CMD% -c "import pip" >nul 2>&1
 if errorlevel 1 (
   echo [FAIL] 이 파이썬에는 pip이 없다: %CHECK_CMD%
-  echo        번들 내장 임베디드 배포(bin\python\python.exe)에는 pip이 없다.
+  echo        번들 내장 임베디드 배포^(bin\python\python.exe^)에는 pip이 없다.
   echo        config.env의 PYTHON_CMD에 그 경로를 적었다면 지워라 - 이 스크립트
   echo        하나만은 다른 .bat들과 달리 대상 PC의 **시스템** Python 3.12를 쓴다.
   exit /b 1

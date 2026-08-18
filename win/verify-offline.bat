@@ -114,7 +114,7 @@ if not exist "%ROOT%pi-packages\npm" goto :sync_packages_git
 if not exist "%PI_CODING_AGENT_DIR%\npm" mkdir "%PI_CODING_AGENT_DIR%\npm"
 xcopy "%ROOT%pi-packages\npm" "%PI_CODING_AGENT_DIR%\npm\" /E /H /Y /D /Q >nul
 if not errorlevel 1 goto :sync_packages_git
-if exist "%PI_CODING_AGENT_DIR%\npm\node_modules" (
+if exist "%PI_CODING_AGENT_DIR%\npm\node_modules\pi-subagents\package.json" (
   echo [warn] pi-packages\npm 동기화가 실패했지만 대상에 이미 패키지가 있다 - 기존 것으로 계속한다
   echo        다른 Pi 세션이 파일을 잠그고 있을 수 있다. 확장이 구버전일 수 있다.
   goto :sync_packages_git
@@ -126,7 +126,7 @@ if not exist "%ROOT%pi-packages\git" goto :sync_packages_settings
 if not exist "%PI_CODING_AGENT_DIR%\git" mkdir "%PI_CODING_AGENT_DIR%\git"
 xcopy "%ROOT%pi-packages\git" "%PI_CODING_AGENT_DIR%\git\" /E /H /Y /D /Q >nul
 if not errorlevel 1 goto :sync_packages_settings
-if exist "%PI_CODING_AGENT_DIR%\git\github.com" (
+if exist "%PI_CODING_AGENT_DIR%\git\github.com\obra\superpowers\package.json" (
   echo [warn] pi-packages\git 동기화가 실패했지만 대상에 이미 패키지가 있다 - 기존 것으로 계속한다
   echo        다른 Pi 세션이 파일을 잠그고 있을 수 있다. 스킬이 구버전일 수 있다.
   goto :sync_packages_settings

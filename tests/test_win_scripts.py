@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 WIN = Path(__file__).resolve().parents[1] / "win"
@@ -14,6 +15,73 @@ SCRIPT_ENCODING = "cp949"
 
 def read(name: str) -> str:
     return (WIN / name).read_text(encoding=SCRIPT_ENCODING)
+
+
+ALL_BATCH_FILES = (
+    "install-python-packages.bat",
+    "start-llama.bat",
+    "start-pi.bat",
+    "verify-offline.bat",
+)
+
+
+def _strip_quoted(line: str) -> str:
+    # 따옴표 안의 괄호는 안전하다(2026-08-18 윈도우 실측) - 큰따옴표 구간을
+    # 통째로 지워서 그 안의 ( ) 는 검사 대상에서 뺀다.
+    out = []
+    in_quotes = False
+    for ch in line:
+        if ch == '"':
+            in_quotes = not in_quotes
+            out.append(ch)
+            continue
+        out.append("Q" if in_quotes else ch)
+    return "".join(out)
+
+
+def _unescaped_parens_in_blocks(body: str) -> list[str]:
+    # cmd.exe는 if/for/else의 ( ... ) 블록 안에서, echo/rem 줄에 있는 따옴표
+    # 밖 괄호를 "^로 이스케이프하지 않으면" 블록 경계로 오해한다. 2026-08-18
+    # 윈도우 실측: 짝이 맞는 괄호(한 줄 안에 ( 와 ) 가 모두 있는 경우)조차
+    # 블록을 조기에 닫아 "...은(는) 예상되지 않았습니다"로 죽는다 - 매칭
+    # 여부와 무관하게 이스케이프가 필요하다. 블록 경계는 "if ...(", "for
+    # ...(", "else (" 로 끝나는 줄이 열고, 줄 앞이 ")" 인 줄이 닫는다(이
+    # 파일들의 실제 스타일 - 다른 형태의 블록은 여기서 다루지 않는다).
+    offenders = []
+    depth = 0
+    opener = re.compile(r"(^|\s)(if\b.*|for\b.*|else)\s*\(\s*$", re.IGNORECASE)
+    for raw in body.split("\n"):
+        line = raw.rstrip("\r")
+        stripped = line.strip()
+        lower = stripped.lower()
+        is_opener = bool(opener.search(stripped))
+        is_closer = stripped.startswith(")")
+        if depth > 0 and (lower.startswith("echo") or lower.startswith("rem")):
+            content = _strip_quoted(line)
+            for idx, ch in enumerate(content):
+                if ch not in "()":
+                    continue
+                if idx > 0 and content[idx - 1] == "^":
+                    continue
+                offenders.append(line)
+                break
+        if is_closer:
+            depth = max(0, depth - 1)
+            if re.search(r"else\s*\(\s*$", stripped, re.IGNORECASE):
+                depth += 1
+        elif is_opener:
+            depth += 1
+    return offenders
+
+
+def test_no_unescaped_parens_in_echo_or_rem_lines_inside_blocks():
+    # install-python-packages.bat 171행이 실측으로 걸린 함정: if 블록 안의
+    # echo 줄에 이스케이프 안 된 괄호가 있으면 그 줄에서 블록이 조기 종료돼
+    # 성공 경로 자체가 실행되지 않는다(2026-08-18 윈도우 실측, 축약 재현
+    # 포함). 완벽한 cmd 파서는 아니다 - echo/rem 줄의 따옴표 밖 괄호만 잡는다.
+    for name in ALL_BATCH_FILES:
+        offenders = _unescaped_parens_in_blocks(read(name))
+        assert not offenders, f"{name}: {offenders}"
 
 
 def test_start_llama_pins_the_required_server_arguments():
@@ -441,7 +509,13 @@ def test_install_python_packages_defaults_to_an_isolated_venv():
     # 사내 스크립트가 numpy<2를 쓰고 있으면 즉시 깨지고 되돌리는 절차도 없다.
     # 그래서 격리가 기본이고, 전역을 바꾸는 쪽을 인자로 명시하게 한다.
     body = read("install-python-packages.bat")
-    assert 'set "USE_VENV=1"' in body, "기본값이 격리 설치여야 한다"
+    # "set "USE_VENV=1"" 문자열만 보면 인자 처리 줄(if /I "%~1"=="venv" set
+    # "USE_VENV=1")도 같은 문자열을 담고 있어 그 줄만 남기고 진짜 기본값
+    # 대입(인자 처리보다 앞)을 0으로 바꿔도 통과한다 - 인자 처리가 시작되기
+    # 전(첫 "if /I "%~1"==" 줄 앞) 구간을 앵커로 삼는다.
+    index_first_arg_check = body.index('if /I "%~1"==')
+    prefix = body[:index_first_arg_check]
+    assert 'set "USE_VENV=1"' in prefix, "기본값이 격리 설치여야 한다"
     assert 'set "VENV_DIR=%ROOT%.venv"' in body
     assert 'if /I "%~1"=="--user" set "USE_VENV=0"' in body, "--user는 인자로 명시할 때만 쓰인다"
     # 무인자 경로에서 --user가 켜지는 곳이 없어야 한다: INSTALL_SCOPE에 --user를
@@ -450,6 +524,18 @@ def test_install_python_packages_defaults_to_an_isolated_venv():
     assert 'set "INSTALL_SCOPE=--user"' in scope_user
     assert body.count('set "INSTALL_SCOPE=--user"') == 1
     assert body.index('set "INSTALL_SCOPE="') < body.index("\n:scope_user\n")
+
+
+def test_install_python_packages_actually_creates_the_venv():
+    # 이 줄이 통째로 "echo skip" 같은 것으로 바뀌어도 이 검사 이전까지는
+    # 아무것도 venv가 실제로 만들어지는지 보지 않았다 - errorlevel 처리와
+    # [FAIL] 메시지만 있으면 그 앞의 실제 생성 명령이 없어도 통과했다.
+    body = read("install-python-packages.bat")
+    venv_guard = body[
+        body.index('if not exist "%VENV_DIR%\\Scripts\\python.exe" (') :
+        body.index('\nset "PYTHON_CMD="%VENV_DIR%')
+    ]
+    assert '%PYTHON_CMD% -m venv "%VENV_DIR%"' in venv_guard
 
 
 def test_install_python_packages_warns_that_user_scope_changes_the_global_python():
@@ -486,6 +572,14 @@ def test_install_python_packages_verifies_every_direct_dependency_not_just_five(
     index_check = body.index("check_imports.py")
     index_evidence = body.index('"%EV%\\python-packages-check.txt"')
     assert index_check < index_evidence, "임포트 결과가 증거 파일로 가야 한다"
+    # 위 두 인덱스는 다음 줄의 "type" 호출도 "%EV%\python-packages-check.txt"를
+    # 담고 있어서, check_imports.py 호출 자체의 "> 리디렉션"을 지워도
+    # (type 줄은 그대로이므로) 통과했다. check_imports.py를 실행하는 그
+    # 줄 자체에 파일로의 리디렉션이 있는지 직접 본다.
+    check_line = next(
+        line for line in body.splitlines() if "check_imports.py" in line
+    )
+    assert '> "%EV%\\python-packages-check.txt"' in check_line, check_line
 
 
 def test_install_python_packages_targets_system_python_not_the_embedded_one():
@@ -642,11 +736,33 @@ def test_pi_package_sync_survives_a_locked_destination_that_already_has_packages
     # 대상이 비어 있을 때만 실패한다.
     for name in ("start-pi.bat", "verify-offline.bat"):
         sync_body = _sync_packages_subroutine_body(read(name))
-        assert 'if exist "%PI_CODING_AGENT_DIR%\\npm\\node_modules"' in sync_body, name
-        assert 'if exist "%PI_CODING_AGENT_DIR%\\git\\github.com"' in sync_body, name
+        # xcopy는 파일 복사에 실패하기 전에 디렉터리 골격을 먼저 만든다
+        # (2026-08-18 윈도우 실측) - 그래서 "node_modules 폴더가 있다"는
+        # 전송이 손상됐을 때도 참이 될 수 있다. 패키지 하나가 실제로
+        # 놓였는지를 구체적 파일로 본다: settings.packages.json이 요구하는
+        # pi-subagents(npm)와 obra/superpowers(git)다.
+        assert (
+            'if exist "%PI_CODING_AGENT_DIR%\\npm\\node_modules\\pi-subagents\\package.json"'
+            in sync_body
+        ), name
+        assert (
+            'if exist "%PI_CODING_AGENT_DIR%\\git\\github.com\\obra\\superpowers\\package.json"'
+            in sync_body
+        ), name
         assert sync_body.count("[warn]") >= 2, name
         # 실패로 끝나는 길도 여전히 남아 있어야 한다(대상이 비었을 때).
         assert sync_body.count("[FAIL]") >= 2, name
+
+
+def test_pi_package_sync_continue_check_is_never_satisfied_by_an_empty_directory():
+    # xcopy가 대상 디렉터리 골격만 만들고 파일 복사에 실패하는 실측 시나리오를
+    # 다시 회귀시키지 않기 위한 앵커: "계속한다" 판정에 쓰이는 exist 검사가
+    # node_modules/github.com 디렉터리 자체가 아니라 그 밑의 구체적 파일을
+    # 가리켜야 한다 - 디렉터리만 가리키는 옛 판정이 되돌아오면 잡는다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        sync_body = _sync_packages_subroutine_body(read(name))
+        assert 'if exist "%PI_CODING_AGENT_DIR%\\npm\\node_modules" (' not in sync_body, name
+        assert 'if exist "%PI_CODING_AGENT_DIR%\\git\\github.com" (' not in sync_body, name
 
 
 def test_pi_package_sync_seeds_settings_json_only_when_absent():
@@ -740,6 +856,11 @@ def test_install_python_packages_places_the_vc_runtime_lightgbm_needs():
         line for line in place.splitlines() if not line.strip().lower().startswith("rem ")
     )
     assert "import lightgbm" not in executable
+    # rem 주석에도 "VCOMP140.DLL"이 나온다(118행) - 그 줄만 남기고 실제
+    # copy 줄만 지우는 돌연변이가 위 두 assert를 통과했었다. 주석을 뺀
+    # 실행 줄에서 실제로 두 DLL을 복사하는지 각각 본다.
+    assert 'copy /y "%VCRUNTIME_DIR%\\VCOMP140.DLL" "%LGB_DIR%\\bin\\"' in executable
+    assert 'copy /y "%VCRUNTIME_DIR%\\MSVCP140.dll" "%LGB_DIR%\\bin\\"' in executable
     assert '"%LGB_DIR%\\bin\\"' in place
     # 실패해도 설치 전체를 멈추지 않되, 조용히 넘어가지도 않는다.
     assert "[warn]" in place

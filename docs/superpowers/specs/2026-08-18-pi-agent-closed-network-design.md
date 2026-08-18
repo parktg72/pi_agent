@@ -137,10 +137,22 @@ Python 3.12 실행이 영향을 받는다는 경고를 콘솔에 찍는다 — �
 훈련된다.
 
 `packages_win\vcruntime\`은 lightgbm 하나 때문에 있다. `lightgbm` 휠 안의
-`lib_lightgbm.dll`이 `VCOMP140.DLL`(OpenMP)과 `MSVCP140.dll`을 import하는데 그
-휠은 둘 다 벤더링하지 않는다(`scikit-learn`은 `sklearn\.libs\`에 자체 동봉해
-무사하다). §3.5의 VC 런타임 3종은 `bin\llama-*\` 안 app-local이라 파이썬
-프로세스의 DLL 검색 경로에 없다. 그래서 이 두 DLL을 따로 싣고,
+`lib_lightgbm.dll`의 실제 import 테이블에는 `MSVCP140.dll`, `VCOMP140.DLL`
+(OpenMP), `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` 4종이 있는데(실측,
+2026-08-18) 휠은 이 중 어느 것도 벤더링하지 않는다(`scikit-learn`은
+`sklearn\.libs\`에 4종을 전부 자체 동봉해 무사하다). 이 번들이 따로 싣는
+것은 앞의 2종(`VCOMP140.DLL`, `MSVCP140.dll`)뿐이다 — §3.5의 VC 런타임 3종은
+`bin\llama-*\` 안 app-local이라 파이썬 프로세스의 DLL 검색 경로에 없어서
+쓸 수 없다. 나머지 `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` 2종은 대상 PC의
+**시스템 Python 3.12 설치본**이 `Python312\VCRUNTIME140.dll`(과 짝 파일)로
+동봉하는 것을 그대로 쓴다(2026-08-18 실측으로 로드 경로 확인) — 이
+스크립트가 시스템 Python을 요구하는 이유 중 하나다. 위험은 낮지만 이
+전제에 기댄다: 운영자가 표준 python.org 설치본이 아닌 다른 경로(예: 별도
+포터블 배포, VC 런타임을 자체 동봉하지 않는 파이썬)로 Python 3.12를
+넣으면 이 두 DLL이 없을 수 있고, 그러면 `import lightgbm`이 아니라 그보다
+먼저 OS 로더 단계에서 실패한다.
+
+그래서 이 두 DLL(`VCOMP140.DLL`, `MSVCP140.dll`)을 따로 싣고,
 `install-python-packages.bat`이 설치된 `lightgbm\bin\` 옆으로 복사한다 —
 scikit-learn이 하는 것과 같은 app-local 방식이고, 파이썬 3.8+ ctypes가 경로로
 DLL을 열 때 `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR`를 켜므로 그 폴더에서 의존 DLL을
