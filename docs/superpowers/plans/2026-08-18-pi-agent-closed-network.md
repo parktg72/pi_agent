@@ -28,8 +28,10 @@
 
 ```
 /mnt/h/model/pi_agent/
-├── tools/                        git 추적. 스테이징 도구 (WSL에서 실행)
-│   ├── manifest.py               불변 영역 해시·검증
+├── tools/                        git 추적. 번들에 함께 실린다 (매니페스트 해시 대상)
+│   ├── manifest.py               불변 영역 해시·검증 (폐쇄망에서도 쓰임)
+│   ├── wait_model.py             모델 적재 대기 (폐쇄망)
+│   ├── verify_bundle.py          매니페스트 대조 (폐쇄망)
 │   ├── assets.py                 자산 카탈로그와 다운로드·해시 검증
 │   ├── layout.py                 압축 해제·배치·백엔드 분리 가드
 │   ├── gguf.py                   GGUF 메타데이터에서 chat_template 확인
@@ -44,8 +46,6 @@
 │   ├── start-pi.bat
 │   ├── verify-offline.bat
 │   ├── config.env.example
-│   ├── tools-win/wait-model.ps1
-│   ├── tools-win/verify-manifest.ps1
 │   └── README-폐쇄망.md
 ├── bin/ models/ home/ evidence/   git 무시. 번들 실체
 └── docs/superpowers/{specs,plans}/
@@ -87,6 +87,8 @@ def make_bundle(tmp_path: Path) -> Path:
     (tmp_path / "evidence").mkdir()
     (tmp_path / "evidence" / "run.log").write_text("noise")
     (tmp_path / "start-pi.bat").write_text("@echo off")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "verify_bundle.py").write_text("# 폐쇄망에서도 실행된다")
     (tmp_path / ".gitignore").write_text("bin/")
     return tmp_path
 
@@ -97,9 +99,9 @@ def test_build_covers_immutable_files_only(tmp_path):
     (root / ".cache" / "huge.zip").write_bytes(b"downloaded asset, not part of the bundle")
     doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="H:\\model\\pi_agent")
     listed = {entry["relative"] for entry in doc["files"]}
-    assert listed == {"bin/pi/pi.exe", "models/m.gguf", "start-pi.bat"}
+    assert listed == {"bin/pi/pi.exe", "models/m.gguf", "start-pi.bat", "tools/verify_bundle.py"}
     assert doc["schema"] == manifest.SCHEMA
-    assert doc["totals"]["files"] == 3
+    assert doc["totals"]["files"] == 4
 
 
 def test_verify_is_quiet_on_an_untouched_bundle(tmp_path):
@@ -158,7 +160,7 @@ from pathlib import Path
 from typing import Iterator
 
 SCHEMA = "pi_agent.closed_network_stage.v1"
-EXCLUDED_ROOTS = ("home", "evidence", "docs", "tools", "tests", "win", ".git", ".cache", ".pytest_cache")
+EXCLUDED_ROOTS = ("home", "evidence", "docs", "tests", "win", ".git", ".cache", ".pytest_cache")
 EXCLUDED_FILES = ("STAGING_MANIFEST.json", ".gitignore")
 _CHUNK = 1024 * 1024
 
@@ -1014,23 +1016,26 @@ git commit -m "스테이징 CLI를 붙이고 핀 없는 자산을 거부한다"
 
 ---
 
-### Task 6: 폐쇄망 실행 스크립트
+### Task 6: 폐쇄망 실행 계층
 
-파이썬 없이 도는 것만 쓴다. 폐쇄망 PC에 파이썬이 있다고 가정하지 않는다.
+폐쇄망 PC에 Python 3.12가 설치되어 있다. 따라서 검증 로직을 PowerShell에 두 번째로 구현하지 않는다 — Task 1의 `manifest.verify`를 그대로 쓴다. 배치 파일은 얇은 진입점 역할만 하고, 판단이 들어가는 부분은 테스트가 있는 파이썬이 맡는다.
+
+`.bat`이 파이썬을 부르는 방법은 `PYTHON_CMD`로 재정의할 수 있고, 기본값은 `py -3.12`이며 실패하면 `python`으로 넘어간다. 둘 다 없으면 명확히 실패한다.
 
 **Files:**
+- Create: `/mnt/h/model/pi_agent/tools/wait_model.py`
+- Create: `/mnt/h/model/pi_agent/tools/verify_bundle.py`
 - Create: `/mnt/h/model/pi_agent/win/config.env.example`
 - Create: `/mnt/h/model/pi_agent/win/start-llama.bat`
 - Create: `/mnt/h/model/pi_agent/win/start-pi.bat`
 - Create: `/mnt/h/model/pi_agent/win/verify-offline.bat`
-- Create: `/mnt/h/model/pi_agent/win/tools-win/wait-model.ps1`
-- Create: `/mnt/h/model/pi_agent/win/tools-win/verify-manifest.ps1`
 - Create: `/mnt/h/model/pi_agent/win/README-폐쇄망.md`
+- Test: `/mnt/h/model/pi_agent/tests/test_wait_model.py`
 - Test: `/mnt/h/model/pi_agent/tests/test_win_scripts.py`
 
 **Interfaces:**
-- Consumes: Task 5의 번들 레이아웃(`bin\llama-cuda\llama-server.exe`, `bin\pi\pi.exe`), Task 1의 `STAGING_MANIFEST.json` 스키마
-- Produces: 번들 루트에 놓일 `.bat` 3종과 `tools-win\*.ps1` 2종. `config.env`가 정의하는 변수: `LLAMA_BACKEND`, `LLAMA_PORT`, `LLAMA_CTX`, `MODEL_FILE`, `MODEL_ALIAS`, `GPU_TENSOR_SPLIT`, `PI_PROVIDER`
+- Consumes: Task 5의 번들 레이아웃(`bin\llama-cuda\llama-server.exe`, `bin\pi\pi.exe`), Task 1의 `manifest.verify`와 `STAGING_MANIFEST.json` 스키마
+- Produces: `wait_model.wait_for_alias(fetch, alias, timeout_s, sleep) -> bool`, `wait_model.main(argv) -> int`, `verify_bundle.main(argv) -> int`, 번들 루트에 놓일 `.bat` 3종. `config.env`가 정의하는 변수: `LLAMA_BACKEND`, `LLAMA_PORT`, `LLAMA_CTX`, `MODEL_FILE`, `MODEL_ALIAS`, `GPU_TENSOR_SPLIT`, `PI_PROVIDER`, `PYTHON_CMD`
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -1074,17 +1079,29 @@ def test_start_pi_seals_offline_mode_and_the_portable_home():
 
 def test_start_pi_waits_for_the_model_before_launching():
     body = read("start-pi.bat")
-    assert "wait-model.ps1" in body
+    assert "wait_model.py" in body
     assert "errorlevel 1" in body
-    index_wait = body.index("wait-model.ps1")
+    index_wait = body.index("wait_model.py")
     index_pi = body.index("bin\\pi\\pi.exe")
     assert index_wait < index_pi, "모델 준비 확인이 Pi 기동보다 먼저여야 한다"
 
 
+def test_batch_files_resolve_python_before_using_it():
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert "PYTHON_CMD" in body, name
+        assert "py -3.12" in body, name
+
+
 def test_verify_offline_collects_every_required_piece_of_evidence():
     body = read("verify-offline.bat")
-    for required in ("nvidia-smi", "verify-manifest.ps1", "v1/models", "pktmon", "evidence"):
+    for required in ("nvidia-smi", "verify_bundle.py", "v1/models", "pktmon", "evidence"):
         assert required in body, required
+
+
+def test_manifest_verification_is_not_reimplemented_in_powershell():
+    for path in WIN.rglob("*.ps1"):
+        assert "Get-FileHash" not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_no_script_mentions_cuda_13():
@@ -1130,6 +1147,10 @@ set "GPU_TENSOR_SPLIT="
 
 rem Pi가 llama.cpp 제공자를 부르는 이름. 리허설에서 pi --list-models로 확인해 채운다.
 set "PI_PROVIDER="
+
+rem 파이썬 실행 방법. 비워두면 py -3.12 를 먼저, 실패하면 python 을 쓴다.
+rem 둘 다 PATH에 없으면 전체 경로를 여기에 적는다.
+set "PYTHON_CMD="
 ```
 
 - [ ] **Step 4: `start-llama.bat`을 쓴다**
@@ -1179,36 +1200,137 @@ echo [info] %LLAMA_BACKEND% 백엔드로 %MODEL_FILE% 를 %MODEL_ALIAS% 로 올�
 exit /b %errorlevel%
 ```
 
-- [ ] **Step 5: `tools-win\wait-model.ps1`을 쓴다**
+- [ ] **Step 5a: 모델 준비 대기의 실패하는 테스트를 쓴다**
 
-```powershell
-param(
-  [Parameter(Mandatory = $true)][string]$BaseUrl,
-  [Parameter(Mandatory = $true)][string]$Alias,
-  [int]$TimeoutSec = 600
-)
+시간과 네트워크를 주입 가능하게 만들어 테스트가 실제로 기다리지 않게 한다.
 
-$ErrorActionPreference = 'Stop'
-$deadline = (Get-Date).AddSeconds($TimeoutSec)
+```python
+# tests/test_wait_model.py
+import sys
+from pathlib import Path
 
-while ((Get-Date) -lt $deadline) {
-  try {
-    $response = Invoke-RestMethod -Uri "$BaseUrl/v1/models" -TimeoutSec 10
-    $ids = @($response.data | ForEach-Object { $_.id })
-    if ($ids -contains $Alias) {
-      Write-Output "[ok] $Alias 준비됨"
-      exit 0
-    }
-    Write-Output "[wait] 적재된 모델: $($ids -join ', ')"
-  } catch {
-    Write-Output "[wait] 서버 응답 없음"
-  }
-  Start-Sleep -Seconds 5
-}
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import wait_model
 
-Write-Output "[FAIL] $TimeoutSec 초 안에 $Alias 가 나타나지 않았다"
-exit 1
+
+def test_returns_true_as_soon_as_the_alias_appears():
+    responses = [
+        ConnectionError("서버 없음"),
+        {"data": [{"id": "other-model"}]},
+        {"data": [{"id": "other-model"}, {"id": "target"}]},
+    ]
+
+    def fetch():
+        item = responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    slept = []
+    assert wait_model.wait_for_alias(fetch, "target", timeout_s=100, sleep=slept.append) is True
+    assert len(slept) == 2, "필요한 만큼만 기다려야 한다"
+
+
+def test_returns_false_when_the_alias_never_appears():
+    def fetch():
+        return {"data": [{"id": "other-model"}]}
+
+    elapsed = []
+
+    def sleep(seconds):
+        elapsed.append(seconds)
+        if len(elapsed) > 50:
+            raise AssertionError("타임아웃이 걸리지 않았다")
+
+    assert wait_model.wait_for_alias(fetch, "target", timeout_s=10, sleep=sleep) is False
+
+
+def test_a_server_that_never_answers_times_out_rather_than_hanging():
+    def fetch():
+        raise ConnectionError("서버 없음")
+
+    assert wait_model.wait_for_alias(fetch, "target", timeout_s=10, sleep=lambda _: None) is False
+
+
+def test_a_malformed_payload_is_treated_as_not_ready():
+    def fetch():
+        return {"unexpected": "shape"}
+
+    assert wait_model.wait_for_alias(fetch, "target", timeout_s=5, sleep=lambda _: None) is False
 ```
+
+- [ ] **Step 5b: 테스트가 실패하는지 확인한다**
+
+Run: `cd /mnt/h/model/pi_agent && python3 -m pytest tests/test_wait_model.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'wait_model'`
+
+- [ ] **Step 5c: `tools/wait_model.py`를 쓴다**
+
+```python
+# tools/wait_model.py
+"""모델이 적재될 때까지 기다린다. 준비되기 전에 Pi를 띄우지 않기 위한 관문.
+
+폐쇄망에서 무인 기동하므로 무한 대기는 금지다. 시간과 네트워크를 인자로
+받아 테스트가 실제로 기다리지 않게 한다.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import urllib.request
+from typing import Callable
+
+_POLL_SECONDS = 5
+
+
+def wait_for_alias(
+    fetch: Callable[[], dict],
+    alias: str,
+    timeout_s: float,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = time.monotonic,
+) -> bool:
+    deadline = now() + timeout_s
+    while True:
+        try:
+            payload = fetch()
+            ids = [entry.get("id") for entry in payload.get("data", [])]
+            if alias in ids:
+                print(f"[ok] {alias} 준비됨")
+                return True
+            print(f"[wait] 적재된 모델: {', '.join(i for i in ids if i) or '없음'}")
+        except Exception as error:  # 서버가 아직 안 떴거나 응답이 깨졌다
+            print(f"[wait] {type(error).__name__}: {error}")
+        if now() + _POLL_SECONDS > deadline:
+            print(f"[FAIL] {timeout_s}초 안에 {alias}가 나타나지 않았다", file=sys.stderr)
+            return False
+        sleep(_POLL_SECONDS)
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="wait_model")
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--alias", required=True)
+    parser.add_argument("--timeout", type=float, default=600.0)
+    args = parser.parse_args(argv)
+
+    def fetch() -> dict:
+        with urllib.request.urlopen(f"{args.base_url}/v1/models", timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    return 0 if wait_for_alias(fetch, args.alias, args.timeout) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+```
+
+- [ ] **Step 5d: 테스트가 통과하는지 확인한다**
+
+Run: `cd /mnt/h/model/pi_agent && python3 -m pytest tests/test_wait_model.py -v`
+Expected: PASS — 4 passed
 
 - [ ] **Step 6: `start-pi.bat`을 쓴다**
 
@@ -1232,7 +1354,10 @@ if not defined MODEL_ALIAS (
   exit /b 2
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools-win\wait-model.ps1" -BaseUrl "%LLAMA_BASE_URL%" -Alias "%MODEL_ALIAS%" -TimeoutSec 600
+call :resolve_python
+if errorlevel 1 exit /b 4
+
+%PYTHON_CMD% "%ROOT%tools\wait_model.py" --base-url "%LLAMA_BASE_URL%" --alias "%MODEL_ALIAS%" --timeout 600
 if errorlevel 1 (
   echo [FAIL] 모델이 준비되지 않았다 - Pi를 시작하지 않는다
   exit /b 3
@@ -1240,42 +1365,66 @@ if errorlevel 1 (
 
 "%ROOT%bin\pi\pi.exe" --offline --model "%MODEL_ALIAS%" %*
 exit /b %errorlevel%
+
+:resolve_python
+if defined PYTHON_CMD goto :eof
+py -3.12 -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYTHON_CMD=py -3.12"
+  goto :eof
+)
+python -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYTHON_CMD=python"
+  goto :eof
+)
+echo [FAIL] Python을 찾지 못했다 - config.env의 PYTHON_CMD로 경로를 지정하라
+exit /b 1
 ```
 
-- [ ] **Step 7: `tools-win\verify-manifest.ps1`을 쓴다**
+- [ ] **Step 7: `tools/verify_bundle.py`를 쓴다**
 
-```powershell
-param(
-  [Parameter(Mandatory = $true)][string]$Root,
-  [string]$ManifestPath
-)
+Task 1의 `manifest.verify`를 그대로 호출한다. 검증 로직을 두 번 구현하지 않기 위해서다. 이 스크립트는 폐쇄망 PC에서 실행되므로 `manifest` 외에는 아무것도 import하지 않는다.
 
-$ErrorActionPreference = 'Stop'
-if (-not $ManifestPath) { $ManifestPath = Join-Path $Root 'STAGING_MANIFEST.json' }
-$document = Get-Content -Raw -Encoding UTF8 $ManifestPath | ConvertFrom-Json
+```python
+# tools/verify_bundle.py
+"""폐쇄망 PC에서 번들이 반입 당시와 같은지 본다.
 
-$problems = @()
-foreach ($entry in $document.files) {
-  $path = Join-Path $Root ($entry.relative -replace '/', '\')
-  if (-not (Test-Path -LiteralPath $path)) {
-    $problems += "missing: $($entry.relative)"
-    continue
-  }
-  $size = (Get-Item -LiteralPath $path).Length
-  if ($size -ne $entry.bytes) {
-    $problems += "size mismatch: $($entry.relative)"
-    continue
-  }
-  $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLower()
-  if ($hash -ne $entry.sha256) { $problems += "hash mismatch: $($entry.relative)" }
-}
+검증 규칙은 Task 1의 manifest 모듈 하나뿐이다. 여기에 두 번째 구현을 두면
+둘이 어긋나도 알 수 없다.
+"""
+from __future__ import annotations
 
-if ($problems.Count -gt 0) {
-  $problems | ForEach-Object { Write-Output "[FAIL] $_" }
-  exit 1
-}
-Write-Output "[ok] $($document.totals.files) 개 파일이 매니페스트와 일치한다"
-exit 0
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import manifest
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="verify_bundle")
+    parser.add_argument("--root", required=True)
+    args = parser.parse_args(argv)
+    root = Path(args.root)
+    manifest_path = root / "STAGING_MANIFEST.json"
+    if not manifest_path.is_file():
+        print(f"[FAIL] {manifest_path} 없음", file=sys.stderr)
+        return 1
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    problems = manifest.verify(root, document)
+    for problem in problems:
+        print(f"[FAIL] {problem}", file=sys.stderr)
+    if problems:
+        return 1
+    print(f"[ok] {document['totals']['files']}개 파일이 매니페스트와 일치한다")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
 ```
 
 - [ ] **Step 8: `verify-offline.bat`을 쓴다**
@@ -1294,7 +1443,9 @@ nvidia-smi > "%EV%\nvidia-smi.txt" 2>&1
 type "%EV%\nvidia-smi.txt"
 
 echo [2/6] 번들 무결성
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools-win\verify-manifest.ps1" -Root "%ROOT%" > "%EV%\manifest-check.txt" 2>&1
+call :resolve_python
+if errorlevel 1 exit /b 4
+%PYTHON_CMD% "%ROOT%tools\verify_bundle.py" --root "%ROOT%" > "%EV%\manifest-check.txt" 2>&1
 type "%EV%\manifest-check.txt"
 
 echo [3/6] 네트워크 캡처 시작
@@ -1320,6 +1471,24 @@ echo.
 echo 증거는 %EV% 에 있다. 종료 코드가 아니라 그 안의 내용이 판정 기준이다.
 echo 확인할 것: nvidia-smi 드라이버 551.61 이상, 매니페스트 일치, v1-models에 %MODEL_ALIAS%,
 echo pi-tool-roundtrip.json 안의 실제 도구 실행과 최종 답변, pktmon.txt에 외부 주소 시도 0건.
+goto :end
+
+:resolve_python
+if defined PYTHON_CMD goto :eof
+py -3.12 -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYTHON_CMD=py -3.12"
+  goto :eof
+)
+python -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYTHON_CMD=python"
+  goto :eof
+)
+echo [FAIL] Python을 찾지 못했다 - config.env의 PYTHON_CMD로 경로를 지정하라
+exit /b 1
+
+:end
 endlocal
 ```
 
@@ -1353,15 +1522,15 @@ endlocal
 
 - [ ] **Step 10: 테스트가 통과하는지 확인한다**
 
-Run: `cd /mnt/h/model/pi_agent && python3 -m pytest tests/test_win_scripts.py -v`
-Expected: PASS — 8 passed
+Run: `cd /mnt/h/model/pi_agent && python3 -m pytest tests/ -v`
+Expected: PASS — 전체 통과 (win 스크립트 10 + wait_model 4 + 앞선 태스크들)
 
 - [ ] **Step 11: 커밋한다**
 
 ```bash
 cd /mnt/h/model/pi_agent
-git add win/ tests/test_win_scripts.py
-git commit -m "폐쇄망 실행 스크립트를 추가한다 - 모델 준비 전에는 Pi가 뜨지 않는다"
+git add win/ tools/wait_model.py tools/verify_bundle.py tests/test_win_scripts.py tests/test_wait_model.py
+git commit -m "폐쇄망 실행 계층을 추가한다 - 모델 준비 전에는 Pi가 뜨지 않는다"
 ```
 
 ---
@@ -1430,9 +1599,7 @@ git commit -m "반입할 모델을 확정하고 chat_template을 확인한다"
 cd /mnt/h/model/pi_agent
 python3 tools/stage.py fetch --root . --cache .cache
 python3 tools/stage.py layout --root . --cache .cache --vc-source <VC++ DLL이 있는 경로>
-cp win/*.bat win/config.env.example ./
-mkdir -p tools-win && cp win/tools-win/*.ps1 tools-win/
-cp win/README-폐쇄망.md ./
+cp win/*.bat win/config.env.example win/README-폐쇄망.md ./
 python3 tools/stage.py manifest --root . --target "H:\\model\\pi_agent"
 ```
 
@@ -1501,7 +1668,7 @@ mkdir -p home/agent evidence
 - [ ] **Step 2: 매니페스트를 재발행한다**
 
 Run: `cd /mnt/h/model/pi_agent && python3 tools/stage.py manifest --root . --target "H:\\model\\pi_agent"`
-Expected: `[ok] N files, M bytes` — N에 `bin/`, `models/`, `.bat`, `tools-win/`, README가 모두 포함된다.
+Expected: `[ok] N files, M bytes` — N에 `bin/`, `models/`, `.bat`, `tools/`, README가 모두 포함된다.
 
 - [ ] **Step 3: 매니페스트를 검증한다**
 
@@ -1529,6 +1696,6 @@ git commit -m "반입 준비를 마치고 인수인계 문서를 남긴다"
 
 ## 계획 자체 점검 결과
 
-- **스펙 커버리지:** §3 사실 → Task 2(해시 핀)·Task 3(백엔드 분리·VC 런타임), §4 레이아웃 → Task 5, §5 부트스트랩 계약 → Task 6(wait-model.ps1 선행 조건), §6 GPU 배치 → Task 6(인자 고정)·Task 8 Step 5(실측), §7 오프라인 봉인 → Task 6(start-pi.bat)·Task 8 Step 6, §8 검증 → Task 8·Task 6(verify-offline.bat), §9 매니페스트 범위 → Task 1, §10 현장 확인 → Task 9 Step 5. 빠진 절 없음.
+- **스펙 커버리지:** §3 사실 → Task 2(해시 핀)·Task 3(백엔드 분리·VC 런타임), §4 레이아웃 → Task 5, §5 부트스트랩 계약 → Task 6(wait_model.py 선행 조건), §6 GPU 배치 → Task 6(인자 고정)·Task 8 Step 5(실측), §7 오프라인 봉인 → Task 6(start-pi.bat)·Task 8 Step 6, §8 검증 → Task 8·Task 6(verify-offline.bat), §9 매니페스트 범위 → Task 1, §10 현장 확인 → Task 9 Step 5. 빠진 절 없음.
 - **미확정 표기:** `<확정된-파일명>`, `<확정된-URL>`, `<VC++ DLL이 있는 경로>` 세 곳은 Task 7·8이 산출하는 값의 자리다. 계획 시점에 알 수 없는 값이며 해당 태스크의 산출물로 명시했다.
 - **타입 일관성:** `manifest.sha256_of`(Task 1)를 `assets`(Task 2)가 그대로 쓴다. `layout.VC_RUNTIME_DLLS`·`BACKEND_MARKERS`(Task 3)를 `stage._layout`(Task 5)이 간접 사용한다. `config.env` 변수 이름은 Task 6의 세 스크립트와 테스트에서 동일하다.
