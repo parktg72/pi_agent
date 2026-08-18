@@ -63,6 +63,8 @@ def verify(root: Path, doc: dict) -> list[str]:
     for rel in sorted(set(recorded) & present):
         entry = recorded[rel]
         path = root / rel
-        if sha256_of(path) != entry["sha256"]:
+        if path.stat().st_size != entry["bytes"]:
+            problems.append(f"size mismatch: {rel}")
+        elif sha256_of(path) != entry["sha256"]:
             problems.append(f"hash mismatch: {rel}")
     return problems

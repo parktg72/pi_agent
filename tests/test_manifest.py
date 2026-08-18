@@ -50,7 +50,7 @@ def test_mutable_areas_may_change_without_breaking_verification(tmp_path):
 def test_verify_reports_tampering_missing_and_extra_files(tmp_path):
     root = make_bundle(tmp_path)
     doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
-    (root / "models" / "m.gguf").write_bytes(b"tampered")
+    (root / "models" / "m.gguf").write_bytes(b"tampere")
     (root / "start-pi.bat").unlink()
     (root / "bin" / "extra.dll").write_bytes(b"x")
     problems = manifest.verify(root, doc)
@@ -65,3 +65,12 @@ def test_manifest_is_json_serialisable_and_sorted(tmp_path):
     json.dumps(doc)
     relatives = [entry["relative"] for entry in doc["files"]]
     assert relatives == sorted(relatives)
+
+
+def test_verify_detects_truncation_without_hashing(tmp_path):
+    root = make_bundle(tmp_path)
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    (root / "models" / "m.gguf").write_bytes(b"weight")
+    problems = manifest.verify(root, doc)
+    assert any("size mismatch: models/m.gguf" == p for p in problems)
+    assert not any("hash mismatch: models/m.gguf" == p for p in problems)
