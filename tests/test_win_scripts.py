@@ -765,6 +765,33 @@ def test_pi_package_sync_continue_check_is_never_satisfied_by_an_empty_directory
         assert 'if exist "%PI_CODING_AGENT_DIR%\\git\\github.com" (' not in sync_body, name
 
 
+def test_pi_package_sync_checks_the_anchor_regardless_of_xcopys_exit_code():
+    # 이 윈도우 빌드의 xcopy는 개별 파일 복사가 접근 거부로 실패해도 종료
+    # 코드 0을 반환하는 사례가 실측됐다(2026-08-18) - "if not errorlevel 1
+    # goto ..." 게이트가 그 경우를 성공으로 오판하면, 그 뒤에 있는 앵커
+    # 파일 존재 검사에 아예 도달하지 못한다. 그래서 앵커 검사는 xcopy 호출
+    # 직후, errorlevel을 묻는 어떤 goto도 거치지 않고 실행돼야 한다. 앵커
+    # 검사를 "실패 분기 안"으로 되돌리는 돌연변이는 xcopy와 앵커 검사
+    # 사이에 반드시 "goto"가 낀다 - 그것 하나만 본다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        sync_body = _sync_packages_subroutine_body(read(name))
+        for xcopy_line, anchor in (
+            (
+                'xcopy "%ROOT%pi-packages\\npm" "%PI_CODING_AGENT_DIR%\\npm\\" /E /H /Y /D /Q >nul',
+                'if exist "%PI_CODING_AGENT_DIR%\\npm\\node_modules\\pi-subagents\\package.json"',
+            ),
+            (
+                'xcopy "%ROOT%pi-packages\\git" "%PI_CODING_AGENT_DIR%\\git\\" /E /H /Y /D /Q >nul',
+                'if exist "%PI_CODING_AGENT_DIR%\\git\\github.com\\obra\\superpowers\\package.json"',
+            ),
+        ):
+            assert xcopy_line in sync_body, name
+            assert anchor in sync_body, name
+            after_xcopy = sync_body[sync_body.index(xcopy_line) + len(xcopy_line) :]
+            between = after_xcopy[: after_xcopy.index(anchor)]
+            assert "goto" not in between.lower(), f"{name}: {between!r}"
+
+
 def test_pi_package_sync_seeds_settings_json_only_when_absent():
     # settings.json은 사용자가 /trust, /settings로 직접 고칠 수 있는 파일이라
     # models.json처럼 매번 덮어쓰면 사용자 설정이 날아간다 - 없을 때만 심는다.

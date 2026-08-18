@@ -110,29 +110,35 @@ rem 속성 .git 폴더가 조용히 스킵되지 않게 한다(2026-08-18 윈도우 실측).
 rem xcopy가 실패해도 대상에 이미 패키지가 있으면 계속한다 - 다른 Pi 세션이
 rem 파일을 잠그고 있으면 두 번째 기동이 아예 안 되던 문제였다. 대상이 비어
 rem 있을 때만 실패로 본다(그때는 확장 없이 뜨느니 멈추는 것이 낫다).
+rem 이 윈도우 빌드의 xcopy는 개별 파일 복사가 접근 거부로 실패해도 종료
+rem 코드 0을 반환하는 사례가 있다(2026-08-18 윈도우 실측) - if not errorlevel 1
+rem 로만 판정하면 그 경우를 성공으로 오판해 내용 검사에 아예 도달하지 못한다.
+rem 그래서 앵커 파일 존재 확인은 xcopy 종료 코드와 무관하게 항상 실행하고,
+rem 종료 코드가 0이 아니었는데도 앵커가 있으면 부분 실패였을 단서를 [warn]으로
+rem 남긴다. 앵커가 없으면 종료 코드와 무관하게 실패로 본다(exit /b 1 유지).
 if not exist "%ROOT%pi-packages\npm" goto :sync_packages_git
 if not exist "%PI_CODING_AGENT_DIR%\npm" mkdir "%PI_CODING_AGENT_DIR%\npm"
 xcopy "%ROOT%pi-packages\npm" "%PI_CODING_AGENT_DIR%\npm\" /E /H /Y /D /Q >nul
-if not errorlevel 1 goto :sync_packages_git
-if exist "%PI_CODING_AGENT_DIR%\npm\node_modules\pi-subagents\package.json" (
-  echo [warn] pi-packages\npm 동기화가 실패했지만 대상에 이미 패키지가 있다 - 기존 것으로 계속한다
-  echo        다른 Pi 세션이 파일을 잠그고 있을 수 있다. 확장이 구버전일 수 있다.
-  goto :sync_packages_git
-)
+set "SYNC_NPM_ERR=%errorlevel%"
+if exist "%PI_CODING_AGENT_DIR%\npm\node_modules\pi-subagents\package.json" goto :sync_packages_npm_ok
 echo [FAIL] pi-packages\npm 을 %PI_CODING_AGENT_DIR%\npm 로 동기화하지 못했고 대상도 비어 있다
 exit /b 1
+:sync_packages_npm_ok
+if "%SYNC_NPM_ERR%"=="0" goto :sync_packages_git
+echo [warn] pi-packages\npm 동기화가 실패했지만 대상에 이미 패키지가 있다 - 기존 것으로 계속한다
+echo        다른 Pi 세션이 파일을 잠그고 있을 수 있다. 확장이 구버전일 수 있다.
 :sync_packages_git
 if not exist "%ROOT%pi-packages\git" goto :sync_packages_settings
 if not exist "%PI_CODING_AGENT_DIR%\git" mkdir "%PI_CODING_AGENT_DIR%\git"
 xcopy "%ROOT%pi-packages\git" "%PI_CODING_AGENT_DIR%\git\" /E /H /Y /D /Q >nul
-if not errorlevel 1 goto :sync_packages_settings
-if exist "%PI_CODING_AGENT_DIR%\git\github.com\obra\superpowers\package.json" (
-  echo [warn] pi-packages\git 동기화가 실패했지만 대상에 이미 패키지가 있다 - 기존 것으로 계속한다
-  echo        다른 Pi 세션이 파일을 잠그고 있을 수 있다. 스킬이 구버전일 수 있다.
-  goto :sync_packages_settings
-)
+set "SYNC_GIT_ERR=%errorlevel%"
+if exist "%PI_CODING_AGENT_DIR%\git\github.com\obra\superpowers\package.json" goto :sync_packages_git_ok
 echo [FAIL] pi-packages\git 를 %PI_CODING_AGENT_DIR%\git 로 동기화하지 못했고 대상도 비어 있다
 exit /b 1
+:sync_packages_git_ok
+if "%SYNC_GIT_ERR%"=="0" goto :sync_packages_settings
+echo [warn] pi-packages\git 동기화가 실패했지만 대상에 이미 패키지가 있다 - 기존 것으로 계속한다
+echo        다른 Pi 세션이 파일을 잠그고 있을 수 있다. 스킬이 구버전일 수 있다.
 :sync_packages_settings
 rem settings.json은 사용자가 /trust, /settings로 직접 고칠 수 있는 파일이라
 rem models.json처럼 매번 덮어쓰면 사용자 설정이 날아간다. 없을 때만
