@@ -65,8 +65,10 @@ def test_layout_refuses_to_extract_when_cache_file_is_tampered(tmp_path):
     assert code == 1
 
 
-def test_layout_requires_vc_source_or_skip_flag(tmp_path):
+def test_layout_requires_vc_source_or_skip_flag(tmp_path, capsys):
     import zipfile
+    import assets
+    import unittest.mock as mock
 
     cache_dir = tmp_path / ".cache"
     cache_dir.mkdir()
@@ -83,9 +85,6 @@ def test_layout_requires_vc_source_or_skip_flag(tmp_path):
         z.close()
 
     # Mock assets with pinned hashes/bytes to pass verification
-    import assets
-    import unittest.mock as mock
-
     pinned_catalog = {
         k: assets.Asset(
             name=v,
@@ -104,13 +103,18 @@ def test_layout_requires_vc_source_or_skip_flag(tmp_path):
 
     with mock.patch("assets.CATALOG", pinned_catalog):
         with mock.patch("assets.verify_downloaded", return_value=[]):
-            # Without --vc-source and without --skip-vc-runtime, should fail
-            code = stage.main(["layout", "--root", str(tmp_path), "--cache", str(cache_dir)])
-            assert code == 1
-
-            # With --skip-vc-runtime, should succeed (or fail on backend checks, but not on vc-source)
             with mock.patch("layout.extract"):
                 with mock.patch("layout.check_backend_dir", return_value=[]):
+                    # Subtest 1: Without --vc-source and without --skip-vc-runtime, should fail
+                    # and the failure reason should mention vc-source or skip-vc-runtime
+                    code = stage.main(["layout", "--root", str(tmp_path), "--cache", str(cache_dir)])
+                    assert code == 1
+                    captured = capsys.readouterr()
+                    stderr_text = captured.err
+                    assert "--vc-source" in stderr_text or "--skip-vc-runtime" in stderr_text, \
+                        f"vc-source gate message not found in stderr: {stderr_text}"
+
+                    # Subtest 2: With --skip-vc-runtime, should succeed
                     code = stage.main(["layout", "--root", str(tmp_path), "--cache", str(cache_dir), "--skip-vc-runtime"])
                     assert code == 0
 
