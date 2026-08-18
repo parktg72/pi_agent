@@ -93,3 +93,48 @@ def test_superpowers_sdd_is_excluded_from_manifest(tmp_path):
 
     problems = manifest.verify(root, doc)
     assert not any(p for p in problems if ".superpowers" in p), "verify should ignore .superpowers changes"
+
+
+def test_pycache_is_excluded_at_every_depth(tmp_path):
+    # verify_bundle.py는 import manifest를 먼저 한다. 즉 .pyc를 해시 범위에 넣으면
+    # 검사 대상이 검사 도중 다시 쓰인다 — 대상 PC의 파이썬 버전이 다르면
+    # unexpected:, 소스 mtime이 바뀌면 hash mismatch:로 확정 실패한다.
+    root = make_bundle(tmp_path)
+    (root / "tools" / "__pycache__").mkdir()
+    (root / "tools" / "__pycache__" / "manifest.cpython-312.pyc").write_bytes(b"bytecode")
+    (root / "bin" / "pi" / "vendor" / "pkg" / "__pycache__").mkdir(parents=True)
+    (root / "bin" / "pi" / "vendor" / "pkg" / "__pycache__" / "x.cpython-313.pyc").write_bytes(b"deep")
+    (root / "bin" / "pi" / "stray.pyc").write_bytes(b"loose bytecode outside __pycache__")
+
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    listed = {entry["relative"] for entry in doc["files"]}
+    assert not any("__pycache__" in rel for rel in listed), sorted(listed)
+    assert not any(rel.endswith(".pyc") for rel in listed), sorted(listed)
+    assert manifest.verify(root, doc) == []
+
+
+def test_a_pyc_appearing_after_staging_does_not_break_verification(tmp_path):
+    root = make_bundle(tmp_path)
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    (root / "tools" / "__pycache__").mkdir()
+    (root / "tools" / "__pycache__" / "manifest.cpython-314.pyc").write_bytes(b"written on the target PC")
+    assert manifest.verify(root, doc) == []
+
+
+def test_config_env_is_excluded_but_its_example_is_hashed(tmp_path):
+    # README와 리허설 절차서가 config.env를 현장에서 채우라고 지시한다.
+    # 해시하면 지시를 따른 운영자에게 hash mismatch가 확정적으로 뜬다.
+    root = make_bundle(tmp_path)
+    (root / "config.env").write_text('set "GPU_TENSOR_SPLIT="\n', encoding="utf-8")
+    (root / "config.env.example").write_text('set "GPU_TENSOR_SPLIT="\n', encoding="utf-8")
+
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    listed = {entry["relative"] for entry in doc["files"]}
+    assert "config.env" not in listed
+    assert "config.env.example" in listed
+
+    (root / "config.env").write_text('set "GPU_TENSOR_SPLIT=10,11,11"\n', encoding="utf-8")
+    assert manifest.verify(root, doc) == [], "현장에서 config.env를 채워도 검사는 조용해야 한다"
+
+    (root / "config.env.example").write_text("tampered\n", encoding="utf-8")
+    assert any("config.env.example" in problem for problem in manifest.verify(root, doc))

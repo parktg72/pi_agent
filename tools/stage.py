@@ -87,13 +87,17 @@ def _layout(root: Path, cache: Path, vc_source: Path | None, skip_vc_runtime: bo
 def _manifest(root: Path, target: str) -> int:
     stamped = _datetime.datetime.now(_datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     document = manifest.build(root, staged_at=stamped, target=target)
-    (root / "STAGING_MANIFEST.json").write_text(json.dumps(document, indent=2, ensure_ascii=False))
+    # 매니페스트는 ensure_ascii=False로 쓰이고 비ASCII 경로(README-폐쇄망.md)를 담는다.
+    # 윈도우 기본 코드페이지(CP949)로 읽고 쓰면 UnicodeDecodeError다 — 양쪽 모두 UTF-8로 못 박는다.
+    (root / "STAGING_MANIFEST.json").write_text(
+        json.dumps(document, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     print(f"[ok] {document['totals']['files']} files, {document['totals']['bytes']} bytes")
     return 0
 
 
 def _verify(root: Path) -> int:
-    document = json.loads((root / "STAGING_MANIFEST.json").read_text())
+    document = json.loads((root / "STAGING_MANIFEST.json").read_text(encoding="utf-8"))
     problems = manifest.verify(root, document)
     for problem in problems:
         print(f"[FAIL] {problem}", file=sys.stderr)

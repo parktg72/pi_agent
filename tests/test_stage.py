@@ -125,3 +125,24 @@ def test_manifest_and_verify_require_root_argument(tmp_path):
     # Commands should require --root to be specified
     with pytest.raises(SystemExit):
         stage.main(["manifest", "--target", "H:\\model\\pi_agent"])
+
+
+def test_manifest_and_verify_pin_utf8_explicitly(tmp_path):
+    # 매니페스트는 ensure_ascii=False로 쓰이고 비ASCII 경로(README-폐쇄망.md)를 담는다.
+    # 윈도우 기본 코드페이지(CP949)에서 encoding 없이 읽으면 UnicodeDecodeError다.
+    (tmp_path / "README-폐쇄망.md").write_text("# 폐쇄망 반입 안내\n", encoding="utf-8")
+    assert stage.main(["manifest", "--root", str(tmp_path), "--target", "T"]) == 0
+
+    raw = (tmp_path / "STAGING_MANIFEST.json").read_bytes()
+    assert "README-폐쇄망.md".encode("utf-8") in raw, "매니페스트가 UTF-8로 쓰이지 않았다"
+    assert stage.main(["verify", "--root", str(tmp_path)]) == 0
+
+    # 이 프로세스의 기본 인코딩이 이미 UTF-8이라 위 왕복만으로는 로케일 의존을
+    # 배제하지 못한다. 그래서 파일 입출력이 encoding을 명시했는지를 소스로 직접 본다.
+    import re
+
+    source = Path(stage.__file__).read_text(encoding="utf-8")
+    calls = re.findall(r"\.(?:read_text|write_text)\((?:[^()]|\([^()]*\))*\)", source, flags=re.S)
+    assert calls, "stage.py에서 텍스트 입출력을 찾지 못했다 - 테스트가 낡았다"
+    for call in calls:
+        assert 'encoding="utf-8"' in call, call
