@@ -1,0 +1,12 @@
+# 반입 번들 본체는 버전 관리 대상이 아니다 (수 GB, 상류 배포물과 모델 가중치)
+bin/
+models/
+
+# 실행하면서 바뀌는 영역 — 매니페스트 해시 범위에서도 제외된다
+home/
+evidence/
+
+# 스테이징 산출물
+*.zip
+*.gguf
+STAGING_MANIFEST.json
