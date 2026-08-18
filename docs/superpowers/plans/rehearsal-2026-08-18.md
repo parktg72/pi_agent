@@ -275,15 +275,38 @@ mode`, 동봉 `bin\pi\docs\llama-cpp.md`도 "Start `llama-server` without
    기준으로 삼는다. 27B 로컬 모델이 스킬 존재를 대화 중에 스스로
    언급하지 못할 수 있으므로(조사 문서 §2: "models don't always do
    this"), 모델 응답에만 의존하지 않는다.
-5. `pi-subagents`의 `subagent` 툴이 실제로 도구 목록에 나타나는지
-   확인한다 — 대화형 세션에서 "지금 쓸 수 있는 도구 목록을 나열해줘"라고
-   묻거나, 서브에이전트에게 짧은 작업을 위임해 본다(예: "scout
-   서브에이전트로 이 폴더의 .bat 파일 개수를 세어줘"). **이때
-   `nvidia-smi`로 자식 프로세스가 새 VRAM을 추가로 잡지 않고 같은
-   `local` 정적 제공자(같은 `llama-server`)를 재사용하는지 반드시
-   확인한다** — 스펙 §13.5 우려 3번. 이 번들은 단일 GPU 구성에 단일
-   27B 모델을 `-m` 단일 모드로 띄우므로, 서브에이전트 병렬 실행이
-   동시 요청 폭주로 이어져 응답이 깨지거나 타임아웃 날 위험이 있다.
+5. `pi-subagents`의 `subagent` 툴을 확인한다. **포어그라운드 위임은
+   되고 백그라운드 위임은 안 된다** — 그 구분이 이 단계의 요점이다.
+
+   먼저 도구 목록에 나타나는지 본다(대화형 세션에서 "지금 쓸 수 있는
+   도구 목록을 나열해줘"). 그다음 **포어그라운드** 위임을 시킨다(예:
+   "scout 서브에이전트로 이 폴더의 .bat 파일 개수를 세어줘" — `async`를
+   켜지 말 것). **기대 결과: 성공.** 자식 세션은 `pi.exe` 자신으로
+   스폰되므로(`runs/shared/pi-spawn.ts`의 `getPiSpawnCommand`가
+   `process.execPath`의 파일명이 `pi.exe`면 그것을 그대로 쓴다) Node가
+   필요 없다.
+
+   이어서 **백그라운드/async** 위임을 한 번 시켜 본다(`async: true`).
+   **기대 결과: 실패.** 이것이 정상이다 — `runs/background/
+   async-execution.ts`가 `resolveNodeExecutable()`이 돌려준 `node.exe`로
+   러너를 스폰하는데, `pi.exe`에서 실행하면 execPath가 `pi.exe`라 그
+   함수는 언제나 문자열 `"node.exe"`를 돌려주고, Node가 없는 폐쇄망
+   PC에서는 프로세스 생성이 `ENOENT`로 죽는다. 콘솔이나 로그에
+   `[pi-subagents] async spawn failed: ... ENOENT` 류 메시지가 보이면
+   원인이 확정된 것이다.
+
+   **관찰되지 않을 것(예전 절차서가 잘못 지목했던 증상):** 2차
+   `llama-server` 기동도, 새 `pi.exe`의 VRAM 추가 점유도 일어나지
+   않는다. 백그라운드 러너는 프로세스 생성 단계에서 죽으므로 GPU에
+   도달하지 못하고, 포어그라운드 자식은 같은 `local` 정적 제공자
+   (`http://127.0.0.1:8080`)로 HTTP 요청만 보내므로 모델을 다시 띄우지
+   않는다. `nvidia-smi` 스냅샷은 그 사실을 확인하는 용도로 남긴다.
+
+   **동시 요청은 폭주가 아니라 직렬화다.** `start-llama.bat`이
+   `--parallel 1`로 띄우므로 llama-server는 요청을 한 번에 하나씩
+   처리한다. 포어그라운드 위임을 N개 겹치면 응답이 뒤섞이는 것이
+   아니라 지연이 N배가 되고, 그것이 재시도와 겹쳐 타임아웃처럼 보인다.
+   여러 개를 겹쳐 시켜 볼 때는 이 점을 알고 시간을 재라.
 
 **증거로 남길 것:** `pi list` 출력 전문, 3번 스모크 테스트의 JSON 출력,
 `/skill:` 자동완성 스크린샷 또는 답변 텍스트, subagent 위임 시도의
@@ -309,12 +332,21 @@ mode`, 동봉 `bin\pi\docs\llama-cpp.md`도 "Start `llama-server` without
 - `/skill:` 자동완성에 아무것도 안 뜬다 → `--no-skills`가 실수로
   켜져 있지 않은지, `home\agent\git\github.com\obra\superpowers\skills\`
   디렉터리가 실제로 존재하는지 확인한다.
-- `subagent` 위임 중 `nvidia-smi`에 두 번째 `llama-server.exe` 또는
-  새 `pi.exe` 프로세스의 VRAM 점유가 보인다 → 자식 세션이 별도
-  프로세스로 모델을 다시 띄우려 한 것이다. 스펙 §13.5 우려 3번이
-  현실화된 사례로 기록하고, 필요하면 이번 라운드에서 `pi-subagents`를
-  비활성화(`--no-extensions` 또는 `home\agent\settings.json`에서 해당
-  패키지 항목 제거)하는 것도 고려한다.
+- **포어그라운드** 위임이 실패한다 → 예상 밖이다. 에러가 `ENOENT`나
+  `node`를 가리키면 이 경로도 Node를 타고 있다는 뜻이므로
+  `pi-spawn.ts`의 판정(`process.execPath`가 `pi.exe`인가)이 이 빌드에서
+  깨진 것이다. 에러 전문을 그대로 기록한다. 모델 쪽 에러(연결/타임아웃)면
+  위임이 아니라 §5의 배선이나 `--parallel 1` 직렬화 문제다.
+- **백그라운드/async** 위임이 실패한다 → **정상이다.** 폐쇄망에 Node가
+  없기 때문이고, 스펙 §13.5 우려 3번이 설명하는 그대로다. 실패로
+  기록하지 말고 "예상된 실패, ENOENT 확인"으로 기록한다. 반대로 이것이
+  성공하면 대상 PC에 Node가 설치돼 있다는 뜻이므로 그 사실을 기록한다.
+- `nvidia-smi`에 두 번째 `llama-server.exe` 또는 새 `pi.exe` 프로세스의
+  VRAM 점유가 보인다 → 예상 밖이다. 이 구성에서는 어느 위임 경로도
+  모델을 다시 띄우지 않는다. 보이면 무엇이 떴는지 프로세스 목록째
+  기록하고, 필요하면 `pi-subagents`를 비활성화(`--no-extensions` 또는
+  `home\agent\settings.json`에서 해당 패키지 항목 제거)하는 것도
+  고려한다.
 
 ---
 
@@ -554,8 +586,12 @@ start-pi.bat
 - `home\agent\settings.json`에 packages 배열 등록: 예 / 아니오
 - 3번 스모크 테스트(`--mode json -p "hi"`) 에러가 `Connection error.`뿐인가: 예 / 아니오
 - `/skill:brainstorming` 자동완성에 나타남: 예 / 아니오
-- `subagent` 툴 위임 성공: 예 / 아니오 / 미시행
-- 위임 중 GPU/VRAM 추가 점유(2차 프로세스) 관찰: 없음 / 있음(내용: ______)
+- `subagent` 툴이 도구 목록에 나타남: 예 / 아니오
+- **포어그라운드** 위임 성공(기대: 성공): 예 / 아니오 / 미시행 — 에러: ______
+- **백그라운드/async** 위임(기대: ENOENT 실패): 예상대로 실패 / 성공(=Node 있음) / 미시행
+  - 실패 메시지에 `node` 또는 `ENOENT`가 있었나: 예 / 아니오 (실제 문구: ______)
+- 위임 중 GPU/VRAM 추가 점유(2차 프로세스) 관찰(기대: 없음): 없음 / 있음(내용: ______)
+- 포어그라운드 위임 N개를 겹쳤을 때 체감 지연(`--parallel 1` 직렬화 확인): ______
 
 ### 관문 ③(툴 왕복)
 
@@ -599,13 +635,17 @@ start-pi.bat
    줄이지 않는다. 관문 ③에서 잰 토큰/초가 실사용에 버틸 만한지가 이번
    리허설의 실질적 판정 포인트 중 하나다 — 너무 느리면 §6의 "백업 모델"
    반입 여부를 여기서 다시 논의해야 한다.
-4. **`pi-subagents`가 단일 GPU/단일 모델 구성과 충돌할 수 있다.**
-   스펙 §13.5, §5-2 절차 5번에서 처음 실측한다. 이 번들은 GPU 3장에
-   27B 모델 하나를 `-m` 단일 모드로 띄우는 구성이라 여분의 모델 서버가
-   없다. `pi-subagents`가 스폰하는 자식 Pi 세션이 같은 `local` 정적
-   제공자(`http://127.0.0.1:8080`)로 정상 라우팅되면 문제없지만, 동시
-   요청이 몰리면 응답이 뒤섞이거나 타임아웃이 날 수 있다 — 조사
-   단계에서 검증하지 못한 채 남긴 항목이다(`pi-packages-research.md`
-   §5의 "확인하지 못한 것"). 문제가 확인되면 `home\agent\settings.json`에서
-   `npm:pi-subagents@0.50.0` 항목을 빼거나 `--no-extensions`로 세션별로
-   끄는 것을 고려한다(`win\README-폐쇄망.md`의 "확장을 끄고 싶을 때" 절 참고).
+4. **`pi-subagents`의 백그라운드 위임은 폐쇄망에서 못 쓴다.**
+   포어그라운드 위임은 `pi.exe` 자신을 스폰하므로 Node 없이 동작하지만
+   (`runs/shared/pi-spawn.ts`), 백그라운드/async 위임은
+   `runs/background/async-execution.ts`가 `node.exe`로 러너를 스폰하므로
+   Node가 없는 PC에서 `ENOENT`로 죽는다. 스펙 §13.5, §5-2 절차 5번에서
+   이 구분을 실측한다. 예전 판의 "2차 llama-server 기동이나 VRAM 점유를
+   관찰하라"는 서술은 틀렸다 — 백그라운드 러너는 GPU에 도달하기 전에
+   죽고, 포어그라운드 자식은 같은 `llama-server`에 HTTP로 붙을 뿐이다.
+   동시 요청도 폭주가 아니라 직렬화다: `--parallel 1`이므로 위임 N개를
+   겹치면 지연이 N배가 되고 재시도와 겹쳐 타임아웃처럼 보인다.
+   백그라운드 위임에 의존하는 워크플로가 필요하면
+   `home\agent\settings.json`에서 `npm:pi-subagents@0.50.0` 항목을 빼거나
+   `--no-extensions`로 세션별로 끄는 것을 고려한다
+   (`README-폐쇄망.md`의 "확장을 끄고 싶을 때" 절 참고).

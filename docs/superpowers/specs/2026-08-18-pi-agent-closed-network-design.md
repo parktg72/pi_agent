@@ -91,10 +91,16 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
 ├── models\                   GGUF
 ├── packages_win\             Python 3.12 오프라인 휠하우스 (Pi/llama-server와 독립)
 │   ├── py312\                 *.whl 155개, win_amd64 cp312 (`--only-binary=:all:`로만 반입)
+│   ├── vcruntime\             VCOMP140.DLL, MSVCP140.dll — lightgbm용 app-local (§13 아님, 아래 설명)
 │   ├── requirements.txt       사람이 읽는 최상위 목록 (범위 선언)
 │   └── constraints-py312.txt  155개 전체 정확 핀 (진실 출처는 휠셋 — §9 참고)
+├── pi-packages\              사전 설치한 Pi 확장·스킬 트리 (§13)
+│   ├── npm\node_modules\      pi-subagents, rpiv-todo, rpiv-ask-user-question 등
+│   ├── git\github.com\        superpowers 클론 (.git 포함 — 숨김 속성)
+│   └── settings.packages.json  packages 배열 정본의 배치본 (win\ 이 정본)
 ├── home\agent\               PI_CODING_AGENT_DIR — 설정·세션 (가변)
 ├── evidence\                 검증 산출물 (가변)
+├── .venv\                    install-python-packages.bat의 기본 설치 대상 (가변, 대상 PC에서 생성)
 ├── start-llama.bat
 ├── start-pi.bat
 ├── verify-offline.bat
@@ -113,7 +119,34 @@ Python 스택이며 llama.cpp/Pi 기동 경로와 완전히 독립적이다 — 
 에 있다. `install-python-packages.bat`은 번들 내장 임베디드 파이썬(`bin\python\`)
 을 쓰지 않는다 — 그 배포에는 pip이 없다. 대신 대상 PC에 이미 설치된 시스템
 Python 3.12를 `py -3.12` → `python` 순으로 찾는다(다른 `.bat`들의 "번들 내장
-파이썬 우선" 순서와 의도적으로 반대다).
+파이썬 우선" 순서와 의도적으로 반대다). 어느 경로로 찾았든, `config.env`의
+`PYTHON_CMD`로 **지정**된 것이든, 쓰기 전에 두 가지를 검사한다:
+`sys.version_info[:2] == (3, 12)`(휠 155개가 전부 cp312 전용이라 3.13에서는
+155개가 모두 "not a supported wheel"로 실패한다)와 `import pip`(임베디드
+배포를 지정했을 때 여기서 걸린다). 검사 없이 지정값을 그대로 쓰면
+`config.env.example`의 안내를 따라 임베디드 경로를 적은 운영자가 pip 없는
+파이썬으로 설치를 시도하게 된다.
+
+**설치 범위의 기본값은 격리다.** 아무 인자 없이 실행하면 `%ROOT%.venv`를
+만들어 거기에만 설치한다. `--user`를 인자로 명시했을 때만
+`%APPDATA%\Python\Python312\site-packages`에 설치하고, 그때는 그 계정의 모든
+Python 3.12 실행이 영향을 받는다는 경고를 콘솔에 찍는다 — 사내 스크립트가
+`numpy<2`를 쓰고 있으면 그 설치 하나로 깨지고 되돌리는 절차가 없다. `.venv`는
+매니페스트 해시 범위 밖이다(§9): 넣으면 설치 직후 `verify()`가 `unexpected:`를
+수천 건 뱉어 무결성 검사가 영구히 빨간불이 되고, 운영자는 그 결과를 무시하도록
+훈련된다.
+
+`packages_win\vcruntime\`은 lightgbm 하나 때문에 있다. `lightgbm` 휠 안의
+`lib_lightgbm.dll`이 `VCOMP140.DLL`(OpenMP)과 `MSVCP140.dll`을 import하는데 그
+휠은 둘 다 벤더링하지 않는다(`scikit-learn`은 `sklearn\.libs\`에 자체 동봉해
+무사하다). §3.5의 VC 런타임 3종은 `bin\llama-*\` 안 app-local이라 파이썬
+프로세스의 DLL 검색 경로에 없다. 그래서 이 두 DLL을 따로 싣고,
+`install-python-packages.bat`이 설치된 `lightgbm\bin\` 옆으로 복사한다 —
+scikit-learn이 하는 것과 같은 app-local 방식이고, 파이썬 3.8+ ctypes가 경로로
+DLL을 열 때 `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR`를 켜므로 그 폴더에서 의존 DLL을
+찾는다. 설치 위치는 격리/`--user`에 따라 다르므로 파이썬에게 직접 묻는다
+(`importlib.util.find_spec` — DLL이 아직 없어 `import lightgbm` 자체가 실패할
+수 있으므로 임포트로 물으면 안 된다).
 
 `bin\python\`은 사용자가 대상 PC에 Python 3.12가 있다고 확인해 주었음에도
 넣는다. 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store
@@ -289,11 +322,15 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ## 9. 매니페스트 범위
 
-`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`, `packages_win\`(휠 155개 + `requirements.txt` + `constraints-py312.txt`).
+`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`, `packages_win\`(휠 155개 + `vcruntime\`의 DLL 2개 + `requirements.txt` + `constraints-py312.txt`), `pi-packages\`(사전 설치한 확장·스킬 트리 + `settings.packages.json`), `tools\`.
 
-`packages_win\`도 다른 반입물과 같은 이유로 불변이다 — 오프라인 설치는 이 폴더의 휠만 참조하고 `install-python-packages.bat`이 쓰는 것은 `home\agent\`(가변, 위에서 이미 제외)뿐이다. 목록은 이 스펙에 다시 나열하지 않는다 — 진실 출처는 `packages_win\requirements.txt`다.
+`packages_win\`도 다른 반입물과 같은 이유로 불변이다 — 오프라인 설치는 이 폴더의 휠만 참조하고 `install-python-packages.bat`이 쓰는 것은 `home\agent\`(가변, 위에서 이미 제외)와 `.venv\`(아래)뿐이다. 목록은 이 스펙에 다시 나열하지 않는다 — 진실 출처는 `packages_win\requirements.txt`다.
+
+`pi-packages\`도 같다. §13.3이 이 트리를 "매니페스트가 검증한 원본"으로 삼고 매 실행마다 가변 영역인 `home\agent\`로 동기화하므로, 원본이 해시 범위 안에 있어야 그 주장이 성립한다. `bin\`, `models\`와 마찬가지로 gitignore 대상이지만(상류 npm/git 배포물) 해시는 한다 — 해시 범위와 git 추적 범위는 같지 않다.
 
 `home\agent\`와 `evidence\`는 제외한다. 첫 실행 즉시 내용이 바뀌므로 포함하면 무결성 검사가 곧바로 깨진다.
+
+`.venv\`도 제외한다. `install-python-packages.bat`의 기본값이 격리 설치라 대상 PC에서 반드시 생기고, 넣으면 설치 직후 `verify()`가 `unexpected: .venv/...`를 수천 건 뱉는다. `verify_bundle.py`는 그것을 실패로 취급하므로 무결성 검사가 영구히 빨간불이 되고, 운영자는 검사 결과를 무시하도록 훈련된다 — `tools\manifest.py` 독스트링이 명시적으로 경계하는 실패 모드다.
 
 다음 셋도 같은 이유로 제외한다.
 
@@ -323,6 +360,14 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 - 라우터 모드 다중 모델 운영 (§5.1에서 배제. 정적 제공자 선언으로 대체했다)
 - 폐쇄망 PC에서의 `pi install` 실행 (npm 필요 — §13이 대신 사전 설치 후
   트리 반입 방식으로 다룬다)
+
+## 12. 성공 기준
+
+폐쇄망 PC에서, 인터넷이 없는 상태로, 관리자 권한 없이:
+
+1. `start-llama.bat` 실행 → 지정한 모델이 GPU에 적재되고 `/v1/models`에 고정 alias가 나타난다.
+2. `start-pi.bat` 실행 → Pi가 그 모델로 대화하고 파일 읽기 툴 왕복이 성립한다.
+3. `verify-offline.bat` 실행 → 위 증거가 `evidence\`에 남고, 외부 연결 시도가 0건으로 기록된다.
 
 ## 13. Pi 확장·스킬 반입
 
@@ -405,17 +450,32 @@ git 소스는 더 단순해서 존재 여부만 본다.
    `verify_bundle.py`가 잡아내는지. `pi-packages\`가 매니페스트 해시
    대상에 실제로 포함됐는지(재발행 시 `STAGING_MANIFEST.json`의
    `files` 배열에 `pi-packages/...` 항목이 나타나는지)도 확인 대상이다.
-3. **`pi-subagents`와 단일 GPU 충돌** — 이 번들은 단일 GPU에 단일
-   27B 모델을 `-m` 단일 모드로 띄우는 구성이다. `pi-subagents`가
-   스폰하는 자식 Pi 세션이 같은 `local` 정적 제공자로 라우팅되고
-   동시 요청을 견디는지, 서브에이전트 병렬 실행이 로컬 추론 서버에
-   대한 동시 요청 폭주로 이어져 응답이 깨지거나 타임아웃 나지 않는지
-   실측이 필요하다 — 조사 문서가 검증하지 못한 채 남긴 항목이다.
+3. **`pi-subagents`의 백그라운드 위임은 폐쇄망에서 동작하지 않는다** —
+   포어그라운드 위임과 백그라운드/async 위임이 서로 다른 실행 파일을
+   쓴다. 소스 실측(`pi-packages\npm\node_modules\pi-subagents\src\`):
 
-## 12. 성공 기준
+   - 포어그라운드(`runs/foreground/execution.ts`)는
+     `runs/shared/pi-spawn.ts`의 `getPiSpawnCommand()`를 쓴다. 그
+     함수는 `process.execPath`의 파일명이 `pi`/`pi.exe`이면 그것을
+     그대로 자식 명령으로 쓴다(`isStandalonePiExecutable`). 이 번들은
+     `pi.exe` 단독 바이너리이므로 **여기에 해당하고, Node 없이 동작한다.**
+   - 백그라운드/async(`runs/background/async-execution.ts:493`)는
+     `shared/node-executable.ts`의 `resolveNodeExecutable()`을 쓴다. 그
+     함수는 `process.execPath`의 파일명이 `node`/`node.exe`가 아니면
+     문자열 `"node.exe"`를 돌려주고, 스폰은
+     `spawn(nodeCommand, [jitiCliPath, runner, cfgPath])` 형태다.
+     `pi.exe`에서 실행하면 execPath가 `pi.exe`라 항상 이 폴백을 타고,
+     Node가 없는 폐쇄망 PC에서는 **`ENOENT`로 실패한다.**
 
-폐쇄망 PC에서, 인터넷이 없는 상태로, 관리자 권한 없이:
+   즉 이 항목의 실패 양상은 "2차 llama-server 기동"이나 "VRAM 추가
+   점유"가 아니다. 그런 것은 애초에 일어나지 않는다 — 백그라운드
+   러너는 프로세스 생성 단계에서 죽는다(`[pi-subagents] async spawn
+   failed: ... ENOENT`). 리허설에서 확인할 것은 이 구분이지 GPU 충돌이
+   아니다.
 
-1. `start-llama.bat` 실행 → 지정한 모델이 GPU에 적재되고 `/v1/models`에 고정 alias가 나타난다.
-2. `start-pi.bat` 실행 → Pi가 그 모델로 대화하고 파일 읽기 툴 왕복이 성립한다.
-3. `verify-offline.bat` 실행 → 위 증거가 `evidence\`에 남고, 외부 연결 시도가 0건으로 기록된다.
+   동시 요청 쪽은 별개이고, 그것도 폭주가 아니다. `start-llama.bat`이
+   `--parallel 1`로 띄우므로 llama-server는 동시 요청을 **직렬화한다.**
+   포어그라운드 위임을 N개 겹치면 응답이 뒤섞이는 것이 아니라 지연이
+   N배가 되고, 그것이 재시도·타임아웃과 겹쳐 "멈춘 것처럼" 보인다.
+   대응은 `--parallel`을 올리는 것이 아니라(KV 캐시가 슬롯 수만큼
+   쪼개진다) 동시 위임 수를 줄이는 것이다.
