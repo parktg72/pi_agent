@@ -139,3 +139,54 @@ def test_config_env_is_excluded_but_its_example_is_hashed(tmp_path):
 
     (root / "config.env.example").write_text("tampered\n", encoding="utf-8")
     assert any("config.env.example" in problem for problem in manifest.verify(root, doc))
+
+
+def test_venv_created_by_the_installer_never_breaks_verification(tmp_path):
+    # install-python-packages.bat의 기본값이 격리 설치라 대상 PC에서 %ROOT%.venv가
+    # 반드시 생긴다. 해시 범위에 넣으면 설치 직후 verify()가 unexpected:를 수천 건
+    # 뱉고 verify_bundle.py가 그것을 실패로 취급한다 — 무결성 검사가 영구히
+    # 빨간불이 되어 운영자가 그것을 무시하도록 훈련되는, 이 모듈 독스트링이
+    # 명시적으로 경계한 실패 모드다.
+    root = make_bundle(tmp_path)
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+
+    site = root / ".venv" / "Lib" / "site-packages" / "numpy"
+    site.mkdir(parents=True)
+    (site / "__init__.py").write_text("# installed on the target PC")
+    (root / ".venv" / "Scripts").mkdir()
+    (root / ".venv" / "Scripts" / "python.exe").write_bytes(b"venv launcher")
+    (root / ".venv" / "pyvenv.cfg").write_text("home = C:\\Python312")
+
+    assert manifest.verify(root, doc) == [], "설치 직후 무결성 검사는 조용해야 한다"
+
+    doc2 = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    assert not any(entry["relative"].startswith(".venv/") for entry in doc2["files"])
+
+
+def test_manifest_scope_holds_the_payload_in_and_the_mutable_areas_out(tmp_path):
+    # EXCLUDED_ROOTS를 누가 늘리거나 줄여도 아래 판정이 그대로여야 한다.
+    # 지금까지 이 저장소에는 "무엇이 범위 안인가"를 지키는 테스트가 없어서,
+    # pi-packages\나 packages_win\을 제외 목록에 넣어도 전부 초록이었다.
+    root = make_bundle(tmp_path)
+    (root / "pi-packages" / "npm" / "node_modules" / "pi-subagents").mkdir(parents=True)
+    (root / "pi-packages" / "npm" / "node_modules" / "pi-subagents" / "index.ts").write_text("x")
+    (root / "pi-packages" / "settings.packages.json").write_text('{"packages": []}')
+    (root / "packages_win" / "py312").mkdir(parents=True)
+    (root / "packages_win" / "py312" / "numpy-2.5.2-cp312-cp312-win_amd64.whl").write_bytes(b"wheel")
+    (root / "packages_win" / "requirements.txt").write_text("numpy\n")
+    (root / ".venv" / "Lib").mkdir(parents=True)
+    (root / ".venv" / "Lib" / "installed.py").write_text("x")
+
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    listed = {entry["relative"] for entry in doc["files"]}
+
+    for inside in (
+        "pi-packages/npm/node_modules/pi-subagents/index.ts",
+        "pi-packages/settings.packages.json",
+        "packages_win/py312/numpy-2.5.2-cp312-cp312-win_amd64.whl",
+        "packages_win/requirements.txt",
+    ):
+        assert inside in listed, f"{inside}는 해시 범위 안이어야 한다"
+
+    for outside_root in (".venv/", "home/", "evidence/"):
+        assert not any(rel.startswith(outside_root) for rel in listed), outside_root

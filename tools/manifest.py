@@ -17,7 +17,21 @@ from pathlib import Path
 from typing import Iterator
 
 SCHEMA = "pi_agent.closed_network_stage.v1"
-EXCLUDED_ROOTS = ("home", "evidence", "docs", "tests", "win", ".git", ".cache", ".pytest_cache", ".superpowers")
+EXCLUDED_ROOTS = (
+    "home",
+    "evidence",
+    "docs",
+    "tests",
+    "win",
+    ".git",
+    ".cache",
+    ".pytest_cache",
+    ".superpowers",
+    # install-python-packages.bat이 기본값으로 만드는 가상환경. 대상 PC에서
+    # 생기므로 스테이징 시점에는 없고, 만들어지는 순간 수천 개 파일이
+    # unexpected:로 쏟아져 무결성 검사가 영구히 빨간불이 된다.
+    ".venv",
+)
 # config.env는 README와 리허설 절차서가 현장에서 채우라고 지시하는 파일이다.
 # 해시하면 지시를 따른 운영자에게 hash mismatch가 확정적으로 뜬다.
 EXCLUDED_FILES = ("STAGING_MANIFEST.json", ".gitignore", ".gitattributes", "config.env")
