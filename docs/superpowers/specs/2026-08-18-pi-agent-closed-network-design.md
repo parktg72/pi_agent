@@ -155,6 +155,16 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 `STAGING_MANIFEST.json`에는 스테이징 단계(Task 5)에서 위 파일의 해시가 다시 기록된다.
 
+### 6.1 이미지 입력 경로의 출처
+
+리뷰가 "문서상 주장"으로 남긴 세 가지는 상류 배포물에서 직접 확인한 것이다. 근거를 남겨 둔다.
+
+- 윈도우에서 이미지 붙여넣기가 `Ctrl+V`가 아니라 `Alt+V`라는 것: Pi 0.84.2 `packages/coding-agent/README.md`의 단축키 표가 "Ctrl+V to paste an image or text (Alt+V on Windows), or drag images onto terminal"로 윈도우만 따로 명시한다.
+- 비대화형 `@파일` 참조: 같은 문서의 예시 `pi -p @screenshot.png "What's in this image?"`.
+- 클립보드가 별도 설치 없이 동작한다는 것: `pi-windows-x64.zip`의 파일 목록에 네이티브 애드온 `node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node`가 포함되어 있다(2026-08-18 실측).
+
+세 항목 모두 문서와 아카이브 내용으로 확인한 것이며, 실제 동작은 §8의 리허설에서 스크린샷 왕복으로 확인한다.
+
 ## 7. 오프라인 봉인
 
 - `.bat`이 `PI_OFFLINE=1`과 `PI_CODING_AGENT_DIR`를 강제 설정한다. 사용자가 잊을 수 없다.
