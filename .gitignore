@@ -21,3 +21,6 @@ STAGING_MANIFEST.json
 /config.env.example
 /tools-win/
 /README-폐쇄망.md
+
+# SDD 작업 공간 (원장·브리프·리뷰 패키지)
+.superpowers/
