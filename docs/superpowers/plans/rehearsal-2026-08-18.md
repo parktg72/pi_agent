@@ -23,6 +23,7 @@
 | GPU 3장 각각의 총/여유 VRAM | `nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free --format=csv` | 장당 총 11GB 근방, GPU0는 디스플레이 출력 때문에 free가 다른 두 장보다 적게 나오는 것이 정상 | §3 "-ts 결정 방법" 절의 표에 옮겨 적기 |
 | VC++ 런타임 시스템 설치 여부 | PowerShell: `Get-Item "C:\Windows\System32\MSVCP140.dll","C:\Windows\System32\VCRUNTIME140.dll","C:\Windows\System32\VCRUNTIME140_1.dll" -ErrorAction SilentlyContinue` | 있어도 없어도 리허설은 진행된다 — 번들이 `bin\llama-cuda\`에 app-local로 3종을 이미 들고 있다(스테이징 시 이 WSL 호스트의 `C:\Windows\System32`에서 복사함). 시스템에 있으면 그쪽이 우선 로드되므로, 있다면 **버전이 app-local 사본과 다른지**도 적어 둔다 | 알아만 두면 됨. 문제 생기면 README "GPU가 안 잡힐 때" 절 참고 |
 | 관리자 권한 여부 | 현재 로그인 계정으로 `net session` 실행 — 성공하면 관리자, `System error 5`면 일반 사용자 | **관리자 권한 없이** 전체 절차가 통과해야 한다(§2 제약). `pktmon`(관문 ④ 이후 오프라인 재시험에서 사용)만 관리자 권한을 요구할 수 있다 — 없으면 `verify-offline.bat`이 `[warn]`을 찍고 계속 진행한다 | 기록란에 있음/없음만 적기 |
+| 파이썬 | `bin\python\python.exe -V` 를 먼저 실행하고, 이어서 `py -3.12 -V` 와 `python -V` 도 실행해 본다 | `.bat`은 `config.env`의 `PYTHON_CMD` → **번들 내장 `bin\python\python.exe`** → `py -3.12` → `python` 순으로 찾는다. 번들 내장이 있으면 시스템 파이썬은 쓰이지 않는다. `python -V`가 아무 출력 없이 Microsoft Store를 여는 것은 앱 실행 별칭 스텁이며, 번들 내장이 있어야 하는 이유가 바로 그것이다 | **어느 파이썬이 실제로 쓰였는지** 기록란에 적기 — 관문 ③ 콘솔의 `wait_model.py` 출력이 나오면 그 경로가 동작한 것 |
 | clean 상태 | Node·CUDA toolkit이 시스템에 설치돼 있지 않은 상태에서 시험하는 것이 이상적이다(§8.1) | 이미 설치돼 있어도 리허설 자체는 진행 가능 — 다만 "Node 없이도 Pi가 뜬다"는 확인이 약해진다는 것만 인지 | 설치 여부 기록 |
 
 이 단계는 스펙 §10 "현장 확인이 필요한 항목" 6개 중 앞 3개(드라이버, VRAM,
@@ -44,15 +45,24 @@ PCIe 토폴로지·RAM·디스크, 지속 부하 시 전력·온도)는 아래 �
    - `MODEL_ALIAS=qwen3.8-27b`
    - `MMPROJ_FILE=mmproj-Qwen3.8-27B-BF16.gguf`
    - `GPU_TENSOR_SPLIT=`(비어 있음 — 이 문서 §3에서 채운다)
-   - `PI_PROVIDER=`(비어 있음 — 이 문서 §5에서 채운다)
+   - `PI_MODEL_ID=local/qwen3.8-27b` (Pi에 넘길 제공자 한정 모델 ID —
+     뒷부분이 `MODEL_ALIAS`와 글자 그대로 같아야 한다)
+   - `PI_PROVIDER=local` (번들 루트 `models.json`이 선언하는 제공자 이름)
+   - `MODEL_LOAD_TIMEOUT=600` (모델 적재 대기 최대 초. 15.66GB를 느린
+     디스크에서 올려 600초로 모자라면 여기서 늘린다)
 3. **매니페스트 무결성부터 확인한다** — 전송 중 손상은 여기서 잡는다(§10):
    ```
-   %PYTHON_CMD% tools\verify_bundle.py --root .
+   bin\python\python.exe tools\verify_bundle.py --root .
    ```
-   기대 결과: `[ok] 433개 파일이 매니페스트와 일치한다` (스테이징 시점 기준
-   파일 수 — Task 8a 보고서의 실제 수치를 확인). 실패하면 어느 파일이
+   기대 결과: `[ok] N개 파일이 매니페스트와 일치한다`. **N을 이 문서에
+   박아 두지 않는다** — 스테이징을 다시 하면 바뀐다. 확인 방법은 이
+   번들의 `STAGING_MANIFEST.json`을 열어 `totals.files` 값을 읽고, 위
+   출력의 숫자가 **그 값과 같은지** 보는 것이다. 두 숫자가 다르면
+   그 자체가 이상이다. 실패하면 어느 파일이
    `missing`/`unexpected`/`hash mismatch`인지 그대로 나온다 — **여기서
    멈춘다. 다음 단계로 넘어가지 않는다.**
+   - `config.env`는 해시 범위에서 제외돼 있다(스펙 §9). 현장에서 값을
+     채워도 이 검사는 조용해야 정상이다.
    - 증거로 남길 것: 이 명령의 전체 출력을 복사해 둔다(나중에
      `verify-offline.bat`이 같은 것을 `evidence\manifest-check.txt`에
      자동으로 남기지만, 최초 1회는 수동으로도 확인).
@@ -150,34 +160,57 @@ powershell -NoProfile -Command "(Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v
 
 ---
 
-## 5. Pi 제공자 이름 확정 — 관문 ③ 전에 반드시 한다
+## 5. 정적 제공자 선언 확인 — 관문 ③ 전에 반드시 한다
 
-`PI_PROVIDER`는 문서로 확정할 수 없다. Pi가 llama.cpp OpenAI 호환
-엔드포인트를 내부적으로 어떤 제공자 이름/모델 ID 형식으로 인식하는지는
-**실기에서 `pi.exe`를 직접 실행해서만** 알 수 있다.
+**이 절이 이번 리허설에서 처음 검증되는 경로다.** 스펙 §5.1을 먼저 읽어라.
+
+요지: `pi.exe`에 내장된 llama.cpp 제공자는 llama-server가 **라우터 모드**로
+떠 있기를 요구한다(바이너리에 `Server is not running in llama.cpp router
+mode`, 동봉 `bin\pi\docs\llama-cpp.md`도 "Start `llama-server` without
+`--model` or `-m`"). 그런데 이 번들은 무인 기동의 결정성을 위해 `-m` 단일
+모델 모드로 띄운다. 그래서 관문 ①②는 통과하고 관문 ③에서 죽는 구조였다.
+
+해결은 라우터 전환이 아니라 **정적 제공자 선언**이다. 번들 루트의
+`models.json`이 로컬 엔드포인트를 제공자 `local`로 선언하고,
+`start-pi.bat`·`verify-offline.bat`이 실행 초반에 그것을
+`home\agent\models.json`으로 덮어쓴다.
 
 절차:
 
-1. 관문 ①의 서버가 뜬 상태에서(모델이 이미 적재돼 있어야 `--list-models`가
-   실제 응답을 반영한다):
+1. 관문 ①의 서버가 뜬 상태에서, 먼저 `start-pi.bat`을 한 번 실행해
+   `models.json`이 배치되게 한다(모델 대기 중이면 그대로 두거나 Ctrl+C로
+   빠져나와도 파일은 이미 복사돼 있다). 배치를 확인한다:
+   ```
+   type home\agent\models.json
+   ```
+   **기대 결과:** 번들 루트의 `models.json`과 같은 내용. `providers.local`의
+   `baseUrl` 포트가 `config.env`의 `LLAMA_PORT`와 같은지도 여기서 본다 —
+   `models.json`은 정적 파일이라 환경변수를 읽지 않는다.
+2. 제공자와 모델이 Pi에 보이는지 확인한다:
    ```
    set "LLAMA_BASE_URL=http://127.0.0.1:8080"
    bin\pi\pi.exe --offline --list-models
    ```
-2. 출력에서 llama.cpp/로컬 서버에 해당하는 제공자 이름과, 그 아래
-   나열되는 모델 ID의 정확한 형식을 읽는다(예: `local/qwen3.8-27b`처럼
-   제공자 접두사가 붙는 형식일 수도, `qwen3.8-27b` 그대로일 수도 있다 —
-   이것 자체가 실기에서만 알 수 있는 값이라 이 문서가 추정하지 않는다).
-3. 확인한 제공자 이름을 `config.env`의 `PI_PROVIDER=`에 채운다.
-4. `start-pi.bat`이 실제로 `--model "%MODEL_ALIAS%"`만 넘기고
-   `PI_PROVIDER`를 직접 소비하지는 않는다는 점에 주의 — 이 값은 기록과
-   `pi -p`류의 향후 스크립팅에서 제공자를 명시할 때 쓰기 위한 것이다.
-   `--list-models` 출력과 `--model` 인자로 실제 라우팅이 되는지를
-   교차 확인하는 데 쓴다.
+   **기대 결과:** 목록에 `local/qwen3.8-27b`가 나타난다. 나타나지 않으면
+   관문 ③으로 넘어가지 마라 — 원인이 여기 있다.
+3. `config.env`의 `PI_MODEL_ID`가 위 출력과 **글자 그대로** 같은지 대조한다.
+   `start-pi.bat`은 이 값을 `--model`로 그대로 넘긴다.
 
-**증거로 남길 것:** `--list-models` 출력 전문.
+**증거로 남길 것:** `--list-models` 출력 전문, `home\agent\models.json` 내용.
 
-**기록란(§7)에 적을 것:** 확인된 제공자 이름, 모델 ID 형식.
+**기록란(§9)에 적을 것:** 목록에 나타난 모델 ID 문자열, `PI_MODEL_ID` 확정값.
+
+**실패 시 다음에 볼 것:**
+- 목록에 `local/...`이 전혀 없다 → `home\agent\models.json`이 실제로
+  놓였는지, JSON이 유효한지 본다. `start-pi.bat`은 파일이 없으면
+  `[FAIL] ...models.json 없음`으로 멈춘다.
+- 모델은 보이는데 "auth" 관련 사유로 선택 불가 → `models.json`의
+  `apiKey` 더미 값이 사라졌는지 확인한다. 키 없는 로컬 서버라도 값이
+  있어야 목록에 살아 있다(상류 `bin\pi\docs\models.md`).
+- 여전히 `Server is not running in llama.cpp router mode`가 보인다 →
+  Pi가 우리 `local` 제공자가 아니라 **내장 llama.cpp 제공자**로 라우팅된
+  것이다. `--model`에 제공자 접두사 없이 `qwen3.8-27b`만 넘기지 않았는지,
+  `PI_MODEL_ID`가 `local/`로 시작하는지 확인한다.
 
 ---
 
@@ -232,8 +265,24 @@ start-pi.bat
   ```
   %PYTHON_CMD% tools\stage.py model-check --root .
   ```
-- 모델 ID 불일치 오류 → §5에서 확정한 `PI_PROVIDER`/`MODEL_ALIAS`와
-  실제 `--model` 인자가 어긋난 것.
+- 모델 ID 불일치 오류 → `config.env`의 `PI_MODEL_ID`(Pi의 `--model`,
+  `local/qwen3.8-27b`)와 `MODEL_ALIAS`(llama-server의 `--alias`,
+  `qwen3.8-27b`)가 어긋난 것. 뒷부분이 글자 그대로 같아야 한다.
+- **`Server is not running in llama.cpp router mode`** → 이번 웨이브가
+  고친 바로 그 결함이 재발한 것이다(스펙 §5.1). Pi가 우리 `local` 정적
+  제공자가 아니라 내장 llama.cpp 제공자로 라우팅됐다는 뜻이다. 순서대로
+  확인한다: (1) `home\agent\models.json`이 실제로 놓였는가, (2) 그 JSON이
+  유효하고 `providers.local`을 담고 있는가, (3) `--model`에 제공자 접두사
+  `local/`이 붙어 나갔는가(`PI_MODEL_ID` 확인), (4) `models.json`의
+  `baseUrl` 포트가 `LLAMA_PORT`와 같은가. **여기서 라우터 모드
+  (`--models-dir`)로 바꾸지 마라** — 무인 기동의 결정성과 mmproj 평면
+  배치 결정을 함께 깨뜨린다(스펙 §5.1, §6).
+- 파이썬 관련 오류(`Python을 찾지 못했다`, import 실패) → §0의 파이썬
+  행으로 돌아간다. `bin\python\python.exe`가 번들에 있으면 그것이 먼저
+  쓰인다. `config.env`의 `PYTHON_CMD`로 강제 지정할 수도 있다.
+- `[FAIL] PI_MODEL_ID 미설정` → `config.env`를 채우지 않았거나, 채웠는데도
+  적용되지 않은 것이다. 후자라면 `home\agent\config.cmd`가 만들어졌는지
+  본다 — `.bat`은 `config.env`를 그 `.cmd` 사본을 거쳐 읽는다(스펙 §5.2).
 
 ---
 
@@ -298,7 +347,10 @@ start-pi.bat
 
 1. **기존 Pi home/cache를 지운다** — `home\agent\`를 삭제하고 처음부터
    다시 시작한다(§8.1). 이전 실행의 캐시된 상태가 오프라인 실패를
-   가려줄 수 있기 때문이다.
+   가려줄 수 있기 때문이다. `home\agent\models.json`과 `config.cmd`도 같이
+   지워지는데 정상이다 — `start-pi.bat`·`verify-offline.bat`이 번들 루트의
+   원본에서 매번 다시 만든다(스펙 §5.1, §5.2). 이 재시험이 그 재생성
+   경로를 실제로 확인해 준다.
 2. **네트워크를 차단한다** — 둘 중 하나:
    - NIC을 비활성화(제어판 → 네트워크 연결 → 사용 안 함), 또는
    - Windows 방화벽으로 `127.0.0.1` 외 아웃바운드를 차단하는 규칙 추가
@@ -310,9 +362,13 @@ start-pi.bat
    ```
    verify-offline.bat
    ```
-   `evidence\`에 6가지가 남는다: `nvidia-smi.txt`, `manifest-check.txt`,
-   `v1-models.json`, `pi-tool-roundtrip.json`, `pktmon.etl`/`pktmon.txt`
-   (관리자 권한이 있을 때만), 그리고 콘솔에 찍히는 확인 안내 문구.
+   `evidence\`에 남는 것: `nvidia-smi.txt`, `manifest-check.txt`,
+   `v1-models.json`, `probe.txt`(스크립트가 직접 쓰는 프로브 파일 —
+   낱말 `NARWHAL-7Q2X` 한 줄), `pi-tool-roundtrip.json`,
+   `pktmon.etl`/`pktmon.txt`(관리자 권한이 있을 때만), 그리고 콘솔에
+   찍히는 확인 안내 문구. **`pi-tool-roundtrip.json` 판정 기준은 그 안에
+   실제 도구 실행 흔적이 있고 최종 답변이 `NARWHAL-7Q2X`를 담는 것이다** —
+   모델이 파일을 못 읽고 지어냈다면 이 낱말이 나올 수 없다.
    **exit 코드가 아니라 `evidence\` 안의 내용이 판정 기준**이다(§8.2).
 5. `pktmon.txt`(또는 관리자 권한이 없어 못 남겼다면 방화벽/네트워크
    모니터 로그)에서 **외부 주소로의 연결 시도 0건**을 확인한다 — 성공한
@@ -348,6 +404,10 @@ start-pi.bat
 | VC++ 런타임 시스템 설치 | 있음 / 없음 (버전 다르면: ______) |
 | 관리자 권한 | 있음 / 없음 |
 | clean 상태(Node/CUDA toolkit 미설치) | Y / N |
+| 파이썬 — `bin\python\python.exe -V` | ______ |
+| 파이썬 — `py -3.12 -V` | ______ (없음/스텁이면 그렇게 적기) |
+| 파이썬 — `python -V` | ______ (없음/스텁이면 그렇게 적기) |
+| `.bat`이 실제로 쓴 파이썬 | 번들 내장 / `py -3.12` / `python` / `PYTHON_CMD` |
 
 ### -ts 확정값
 
@@ -364,11 +424,14 @@ start-pi.bat
 - 결과: 통과 / 실패
 - 응답에 나온 정확한 id 문자열: ______________
 
-### Pi 제공자 이름
+### Pi 제공자/모델 ID (정적 선언)
 
 - `--list-models` 출력에서 확인한 제공자 이름: ______________
 - 모델 ID 형식: ______________
-- `PI_PROVIDER=______________` (확정값)
+- `--list-models` 에 나타난 모델 ID: `______________`
+- `PI_MODEL_ID=______________` (확정값)
+- `home\agent\models.json` 배치 확인: 예 / 아니오
+- 실제로 쓰인 파이썬: 번들 내장 / `py -3.12` / `python` / `PYTHON_CMD` 지정
 
 ### 관문 ③(툴 왕복)
 

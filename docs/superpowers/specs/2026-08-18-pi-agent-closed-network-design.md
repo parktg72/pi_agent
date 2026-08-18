@@ -86,16 +86,25 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
 │   ├── pi\                   pi-windows-x64.zip 해제 (pi.exe 등)
 │   ├── llama-cuda\           CUDA 12.4 zip + cudart 12.4 zip + VC++ DLL 3종
 │   ├── llama-vulkan\         Vulkan 빌드 (폴백, 독립 디렉터리)
-│   └── llama-cpu\            CPU 빌드 (진단용, 독립 디렉터리)
+│   ├── llama-cpu\            CPU 빌드 (진단용, 독립 디렉터리)
+│   └── python\               Python 3.12 임베디드 배포 (.bat이 쓰는 파이썬)
 ├── models\                   GGUF
 ├── home\agent\               PI_CODING_AGENT_DIR — 설정·세션 (가변)
 ├── evidence\                 검증 산출물 (가변)
 ├── start-llama.bat
 ├── start-pi.bat
 ├── verify-offline.bat
+├── config.env                운영자가 현장에서 채운다 (해시 범위 밖)
+├── config.env.example
+├── models.json               Pi 정적 제공자 선언 (§5.1)
 ├── STAGING_MANIFEST.json
 └── README-폐쇄망.md
 ```
+
+`bin\python\`은 사용자가 대상 PC에 Python 3.12가 있다고 확인해 주었음에도
+넣는다. 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store
+앱 실행 별칭 스텁이 잡히면 복구가 불가능하기 때문이다 — `.bat`은 `PYTHON_CMD`
+→ 번들 내장 → `py -3.12` → `python` 순으로 찾는다.
 
 백엔드 DLL을 섞지 않기 위해 세 런타임은 **각각 독립 디렉터리**를 유지한다. 한 폴더에 합치면 어느 백엔드가 로드됐는지 확정할 수 없다.
 
@@ -109,13 +118,50 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
      -ngl 999 -c 32768 --parallel 1 -sm layer -ts <실측값>
 2. readiness 폴링 — 서버가 응답할 때까지 대기 (무한 대기 금지, 타임아웃과 실패 종료)
 3. /v1/models 조회 — <고정-모델-ID>가 나타나는지 확인. 없으면 중단.
-4. Pi 기동 — 동일한 모델 ID와 LLAMA_BASE_URL 사용
-5. 툴 왕복 스모크 테스트 — 실제 파일 읽기 1회를 왕복으로 확인
+4. 정적 제공자 선언 배치 — 번들 루트의 models.json을 PI_CODING_AGENT_DIR로
+   복사한다. 이것이 있어야 Pi가 이 엔드포인트를 하나의 제공자로 인식한다.
+5. Pi 기동 — --model <제공자>/<고정-모델-ID> 와 LLAMA_BASE_URL 사용
+6. 툴 왕복 스모크 테스트 — 실제 파일 읽기 1회를 왕복으로 확인
 ```
 
-`--models-dir` 라우터 모드는 선택지로 남기되 기본값이 아니다. 라우터를 쓰려면 명시적 load API 호출, 동시 적재 한도, 백업 모델 전환 절차까지 `.bat`에 고정해야 한다.
+### 5.1 왜 라우터 모드를 쓰지 않고 정적 제공자를 선언하는가
 
-Pi 쪽 연결은 환경변수(`LLAMA_BASE_URL`, 필요 시 `LLAMA_API_KEY`)로 세팅하여 대화형 `/login` 단계를 제거한다.
+`pi.exe`에 내장된 llama.cpp 제공자는 **라우터 모드를 요구한다.** 근거 두 가지:
+
+- 바이너리에 `throw new Error("Server is not running in llama.cpp router mode")` 문자열이 있다.
+- 같이 실린 `bin\pi\docs\llama-cpp.md`가 "Start `llama-server` without `--model` or `-m`. Passing a model starts single-model mode instead of router mode."라고 못 박고, 문제 해결 절에도 "**Server is not in router mode:** Start it without `--model`, `-m`, or `-hf`."가 있다.
+
+그런데 위 1번은 `-m`으로 단일 모델 모드를 띄운다. 그래서 관문 ①②(서버 기동, `/v1/models`에 alias 노출)는 통과하고 관문 ③(툴 왕복)에서 죽는다.
+
+**라우터 모드로 바꾸지 않는다.** 무인 기동의 결정성이 이 절의 핵심이고, 라우터로 가면 명시적 load API 호출·동시 적재 한도·전환 절차가 `.bat`에 들어와야 하며 §6의 mmproj 평면 배치 결정과도 충돌한다(라우터는 멀티모달 모델을 하위 디렉터리에 두라고 요구한다).
+
+대신 **정적 제공자 선언**으로 푼다. Pi는 `PI_CODING_AGENT_DIR\models.json`에서 사용자 정의 제공자를 읽는다(`bin\pi\docs\models.md`). 번들 루트에 다음을 두고, `start-pi.bat`·`verify-offline.bat`이 실행할 때마다 `PI_CODING_AGENT_DIR`로 덮어쓴다.
+
+```json
+{"providers":{"local":{"baseUrl":"http://127.0.0.1:8080/v1","api":"openai-completions",
+ "apiKey":"local","compat":{"supportsDeveloperRole":false,"supportsReasoningEffort":false},
+ "models":[{"id":"qwen3.8-27b", ...}]}}}
+```
+
+- 원본은 **번들 루트**에 둔다. `home\agent\`는 가변 영역이라 해시되지 않으므로 원본이 거기 있으면 매니페스트가 지켜 주지 못한다. 매번 덮어쓰므로 설정은 항상 검증된 원본에서 나온다.
+- `compat`의 두 플래그를 끄는 이유는 상류 문서가 Ollama/vLLM 같은 OpenAI 호환 서버에 대해 명시하기 때문이다(`developer` 역할 대신 `system`, `reasoning_effort` 미전송).
+- `apiKey`는 더미 값이다. 키 없는 로컬 서버라도 값이 있어야 모델이 `/model`과 `--list-models`에 나타난다.
+- Pi에 넘기는 모델 ID는 제공자 한정 형식 `local/qwen3.8-27b`이다(`--model`은 `provider/id`를 받는다 — `bin\pi\docs\usage.md`). 뒷부분은 `llama-server`의 `--alias`와 **글자 그대로 같아야 한다.**
+- `models.json`은 정적 파일이라 환경변수를 읽지 않는다. `LLAMA_PORT`를 바꾸면 `baseUrl`의 포트도 같이 바꿔야 한다.
+- readiness 폴링이 보는 엔드포인트는 그대로 `/v1/models`다. 단일 모델 모드에서 정상 응답하며, 거기 나타나는 이름은 제공자 접두사 없는 `--alias` 값이다.
+
+**이 연결 방식은 리허설에서 처음 검증된다.** 위 근거는 모두 바이너리 문자열과 동봉 문서에서 확인한 것이고, 정적 제공자 선언이 이 Pi 빌드에서 실제로 툴 왕복까지 완주하는지는 윈도우에서 `pi.exe`를 돌려봐야만 안다.
+
+Pi 쪽 연결은 환경변수(`LLAMA_BASE_URL`, 필요 시 `LLAMA_API_KEY`)와 위 `models.json`으로 세팅하여 대화형 `/login` 단계를 제거한다.
+
+### 5.2 실행 스크립트가 만족해야 하는 윈도우 제약 (2026-08-18 실측)
+
+`.bat`은 우리가 쓰는 대로 실행되지 않는다. 아래 넷은 윈도우에서 직접 재현해 확인한 것이며, 각각 단독으로 반입 전체를 무력화한다.
+
+- **줄바꿈은 CRLF여야 한다.** cmd.exe는 배치 파일을 실행하면서 줄을 바이트 오프셋으로 다시 찾는다. LF뿐인 파일에 비ASCII(한글) 줄이 있으면 그 다음 줄부터 파싱이 어긋나 줄 중간이 명령으로 실행된다.
+- **파일 인코딩은 콘솔 코드페이지와 같아야 한다.** UTF-8 + `chcp 65001`은 CRLF여도 긴 한글 줄에서 같은 어긋남이 재현된다. CP949로 저장하고 `chcp 949`를 쓰면 재현되지 않는다. 파이썬 호출의 `PYTHONIOENCODING`도 여기에 맞춘다.
+- **`call`은 `.bat`/`.cmd`만 배치로 실행한다.** `call "...\config.env"`는 아무 일도 하지 않고 `errorlevel 0`으로 돌아온다. 운영자에게 익숙한 `config.env` 이름을 유지하려면 가변 영역에 `.cmd` 사본을 만들어 그것을 `call`해야 한다.
+- **후행 역슬래시가 붙은 경로를 따옴표 안에 넣어 외부 프로그램에 넘기지 않는다.** `%~dp0`는 항상 `\`로 끝나므로 `--root "%ROOT%"`는 argv에서 `C:\pi_agent"`로 깨진다. `--root "%ROOT%."`로 경로를 끝낸다.
 
 ## 6. GPU 배치
 
@@ -229,9 +275,16 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ## 9. 매니페스트 범위
 
-`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `README-폐쇄망.md`.
+`STAGING_MANIFEST.json`은 **불변 영역만** 해시한다: `bin\`, `models\`, `.bat` 파일들, `models.json`, `config.env.example`, `README-폐쇄망.md`.
 
 `home\agent\`와 `evidence\`는 제외한다. 첫 실행 즉시 내용이 바뀌므로 포함하면 무결성 검사가 곧바로 깨진다.
+
+다음 셋도 같은 이유로 제외한다.
+
+- `config.env` — README와 리허설 절차서가 `GPU_TENSOR_SPLIT` 등을 **현장에서 채우라고 지시한다.** 해시하면 지시를 따른 운영자에게 `hash mismatch: config.env`가 확정적으로 뜨고, 운영자는 무결성 검사 결과를 무시하도록 훈련된다. 그게 전송 손상을 잡는 유일한 장치다. 템플릿 `config.env.example`은 해시를 유지한다.
+- `__pycache__\`와 `*.pyc` — `verify_bundle.py`가 `import manifest`를 먼저 하므로 자기가 검사할 파일을 자기가 다시 쓴다. 대상 PC의 파이썬 버전이 다르면 `unexpected:`로, 소스 mtime이 바뀌면 `hash mismatch:`로 무조건 실패한다. 경로 깊이와 무관하게 제외한다.
+
+해시 범위는 git 추적 범위와 같지 않다. `bin\`, `models\`는 gitignore 대상이지만 반입물의 본체이므로 해시하고, `win\`은 git이 추적하지만 번들 루트로 복사된 사본만 해시하므로 제외한다.
 
 기록 항목은 기존 관례를 따른다: 상대 경로, 파일 수, 바이트, SHA256, 원본과 대상의 일치 여부.
 
@@ -252,7 +305,7 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 - Pi 패키지·확장의 오프라인 설치 (npm 필요)
 - 폐쇄망 내 모델 추가 다운로드
 - 다중 사용자 공유 배포
-- 라우터 모드 다중 모델 운영 (선택지로만 남김)
+- 라우터 모드 다중 모델 운영 (§5.1에서 배제. 정적 제공자 선언으로 대체했다)
 
 ## 12. 성공 기준
 

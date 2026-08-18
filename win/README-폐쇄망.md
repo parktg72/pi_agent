@@ -6,11 +6,52 @@
 
 ## 순서
 1. 번들을 `C:\pi_agent` 로 복사한다.
-2. `config.env.example` 을 `config.env` 로 복사하고 `MODEL_FILE`, `MODEL_ALIAS` 를 채운다.
+2. `config.env.example` 을 `config.env` 로 복사하고 `MODEL_FILE`, `MODEL_ALIAS`, `PI_MODEL_ID` 를 채운다.
 3. `nvidia-smi` 로 GPU별 여유 VRAM을 보고 `GPU_TENSOR_SPLIT` 을 정한다. 비워두면 기본 분배를 쓴다. `1,1,1` 로 고정하지 않는다.
 4. 창 하나에서 `start-llama.bat` 을 실행한다. 이 창은 서버가 사는 곳이므로 닫지 않는다.
 5. 다른 창에서 `start-pi.bat` 을 실행한다. 모델이 준비되기 전에는 Pi가 뜨지 않는다.
 6. `verify-offline.bat` 을 실행해 `evidence\` 에 증거를 남긴다.
+
+`config.env` 는 현장에서 값을 채우는 파일이라 `STAGING_MANIFEST.json` 의 해시
+범위에서 **제외**돼 있다. 값을 고쳐도 `verify-offline.bat` 의 무결성 검사는
+조용해야 정상이다. 반대로 검사가 무언가를 지적하면 그것은 진짜 전송 손상이다.
+
+## 모델 ID 두 개가 반드시 맞아야 한다
+
+`config.env` 에는 이름이 비슷한 값이 둘 있다. 어긋나면 서버는 정상인데 Pi만
+모델을 찾지 못한다.
+
+| 값 | 누가 읽나 | 예 |
+|---|---|---|
+| `MODEL_ALIAS` | `llama-server` 의 `--alias`. `/v1/models` 에 이 이름으로 나타난다 | `qwen3.8-27b` |
+| `PI_MODEL_ID` | Pi의 `--model`. `<제공자>/<MODEL_ALIAS>` 형식이다 | `local/qwen3.8-27b` |
+
+`PI_MODEL_ID` 의 앞부분 `local` 은 번들 루트 `models.json` 이 선언하는 제공자
+이름이고, 뒷부분은 `MODEL_ALIAS` 와 **글자 그대로 같아야 한다.**
+
+### 왜 `models.json` 이 필요한가
+
+`pi.exe` 에 내장된 llama.cpp 제공자는 llama-server가 **라우터 모드**로 떠
+있기를 요구한다(`--models-dir` 로 띄우고 모델을 API로 적재하는 방식). 이
+번들은 무인 기동의 결정성을 위해 `-m` 단일 모델 모드로 띄우므로 그 경로를 쓸
+수 없다. 대신 번들 루트의 `models.json` 이 OpenAI 호환 엔드포인트를 제공자
+`local` 로 **정적 선언**한다. `start-pi.bat` 과 `verify-offline.bat` 이 실행할
+때마다 이 원본을 `home\agent\models.json` 으로 덮어쓰므로, 설정은 항상
+매니페스트가 검증한 원본에서 나온다. `home\agent\models.json` 을 직접 고치지
+마라 — 다음 실행에서 덮어써진다.
+
+`LLAMA_PORT` 를 바꾸면 `models.json` 의 `baseUrl` 포트도 같이 바꿔야 한다.
+`models.json` 은 정적 파일이라 환경변수를 읽지 않는다.
+
+> **이 연결 방식은 리허설에서 처음 검증된다.** 정적 제공자 선언이 이 Pi
+> 빌드에서 실제로 동작하는지는 윈도우에서 `pi.exe` 를 돌려봐야만 안다.
+
+## 파이썬
+
+`start-pi.bat` 과 `verify-offline.bat` 은 파이썬을 쓴다. 찾는 순서는
+`config.env` 의 `PYTHON_CMD` → 번들 내장 `bin\python\python.exe` →
+`py -3.12` → `python` 이다. 번들이 파이썬 3.12 임베디드 배포를 들고 다니므로
+대상 PC에 파이썬이 없어도, Microsoft Store 앱 실행 별칭 스텁이 잡혀도 동작한다.
 
 ## 이미지로 에러 코드 입력하기 (비전 프로젝터)
 
