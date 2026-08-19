@@ -28,6 +28,7 @@ STAGING_MANIFEST.json
 # win/ 에서 번들 루트로 복사되는 사본 (원본만 추적한다)
 /start-llama.bat
 /start-pi.bat
+/verify-bundle.bat
 /verify-offline.bat
 /install-python-packages.bat
 /config.env

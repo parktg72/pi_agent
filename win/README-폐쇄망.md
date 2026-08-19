@@ -9,7 +9,7 @@
 | # | 실행할 것 | 언제 | 창 |
 |---|---|---|---|
 | 0 | 번들을 `C:\pi_agent` 로 복사 | 최초 1회 | — |
-| 1 | `bin\python\python.exe tools\verify_bundle.py --root .` | 최초 1회 | 아무 창 |
+| 1 | `verify-bundle.bat` | 최초 1회 | 아무 창 |
 | 2 | `config.env` 의 `GPU_TENSOR_SPLIT` 채우기 | 최초 1회 | — |
 | 3 | `install-python-packages.bat` | 파이썬 작업이 필요할 때만 | 아무 창 |
 | 4 | `start-llama.bat` | **매번**, 가장 먼저 | 전용 창 — 닫지 않는다 |
@@ -20,7 +20,12 @@
 
 **1 — 무결성 검사가 먼저다.** 전송 중 손상은 여기서만 잡힌다. 출력의 파일 수가
 `STAGING_MANIFEST.json` 의 `totals.files` 와 같아야 한다. 다르면 **거기서 멈추고
-다시 복사한다** — 뒤 단계는 전부 무의미해진다.
+다시 복사한다** — 뒤 단계는 전부 무의미해진다. **반드시 `verify-bundle.bat`
+으로 실행한다 — `bin\python\python.exe tools\verify_bundle.py` 를 직접 부르지
+않는다.** 이 배치를 거치지 않으면 콘솔 코드페이지 지정(`chcp 65001`)과
+`PYTHONIOENCODING=utf-8` 이 빠져 파이썬 출력이 콘솔 기본 코드페이지(한국어
+윈도우면 CP949)로 나가고, 한글 진단 메시지가 깨진다(2026-08-18 윈도우 실측 —
+"간단하니 직접 부르자"로 되돌리지 마라).
 
 **2 — 현장에서 채울 값은 `GPU_TENSOR_SPLIT` 하나다.** 나머지(`MODEL_FILE`,
 `MODEL_ALIAS`, `PI_MODEL_ID`, `MMPROJ_FILE`, `MODEL_LOAD_TIMEOUT`)는 반입 시점에
@@ -93,7 +98,7 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 
 ## 파이썬
 
-`start-pi.bat` 과 `verify-offline.bat` 은 파이썬을 쓴다. 찾는 순서는
+`start-pi.bat`, `verify-bundle.bat`, `verify-offline.bat` 은 파이썬을 쓴다. 찾는 순서는
 `config.env` 의 `PYTHON_CMD` → 번들 내장 `bin\python\python.exe` →
 `py -3.12` → `python` 이다. 번들이 파이썬 3.12 임베디드 배포를 들고 다니므로
 대상 PC에 파이썬이 없어도, Microsoft Store 앱 실행 별칭 스텁이 잡혀도 동작한다.
@@ -102,6 +107,30 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 배포에는 pip이 없어서 패키지를 설치할 수 없기 때문이다 — 그 스크립트는 대상
 PC의 시스템 Python 3.12를 쓰고, `PYTHON_CMD` 로 지정된 것도 3.12인지와 pip이
 있는지를 검사한 뒤에야 쓴다. 아래 "Python 오프라인 패키지 설치" 절을 보라.
+
+## 콘솔 인코딩
+
+`.bat` 파일(`start-llama.bat`, `start-pi.bat`, `verify-bundle.bat`,
+`verify-offline.bat`, `install-python-packages.bat`)과
+`config.env` / `config.env.example` 은 이제
+순수 ASCII다 — 배치 자신이 내는 메시지(`[FAIL]`, `[info]`, `[warn]` 등)는
+전부 영문이다. 그래서 콘솔 코드페이지를 `chcp 65001`(UTF-8)로 맞춰도 배치
+자신의 출력은 깨지지 않는다.
+
+`tools\*.py` 는 여전히 한글로 진단 메시지를 낸다(예: `packages_diff.py` 의
+`[warn]` 경고). 배치는 파이썬을 부르기 전에 `PYTHONIOENCODING=utf-8` 을
+세팅하므로, 이 한글 출력은 UTF-8 콘솔에 정상 표시된다. `evidence\` 아래
+남는 리다이렉트 파일(`manifest-check.txt`, `python-packages-check.txt`,
+`pi-tool-roundtrip.json` 등)도 같은 이유로 이제 UTF-8이다 — CP949가 아니다.
+
+**왜 바뀌었나.** 예전에는 `.bat` 자신에 한글 메시지가 있었다 — 그래서 파일을
+CP949로 인코딩해야 했고(UTF-8 `.bat` 은 cmd.exe가 줄 위치를 바이트 오프셋으로
+다시 찾다가 파싱을 깨뜨린다), 콘솔도 `chcp 949` 로 맞춰야 했다. 문제는 실제
+사용 환경(VS Code 터미널, Windows Terminal)이 출력을 UTF-8로 디코드한다는
+것이었다 — CP949 바이트가 그대로 나오니 한글이 깨졌다. 해법은 `.bat` 에서
+한글 자체를 없애는 것이다: 파일에 비ASCII 문자가 없으면 파일 인코딩 문제가
+성립하지 않고, 콘솔을 `chcp 65001` 로 맞출 수 있고, 파이썬이 내는 한글은
+UTF-8로 정상 출력된다.
 
 ## 이미지로 에러 코드 입력하기 (비전 프로젝터)
 
