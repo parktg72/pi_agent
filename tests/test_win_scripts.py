@@ -8,9 +8,17 @@ WIN = Path(__file__).resolve().parents[1] / "win"
 # 다시 찾는다. 비ASCII 문자가 있으면 그 계산이 어긋나 줄 중간부터 명령으로
 # 실행된다. 2026-08-18 윈도우 실측: UTF-8/CRLF config.env를 call하면
 # "'?워'은(는) 내부 또는 외부 명령이 아닙니다" 류 오류가 6건 났고, 같은 내용을
-# CP949로 인코딩하면 한 건도 나지 않았다. 그래서 이 번들의 .bat과 config 계열은
-# CP949로 저장하고 chcp 949로 콘솔 코드페이지를 파일 인코딩에 맞춘다.
-SCRIPT_ENCODING = "cp949"
+# CP949로 인코딩하면 한 건도 나지 않았다. 그래서 한때는 이 번들의 .bat과 config
+# 계열을 CP949로 저장하고 chcp 949로 콘솔 코드페이지를 파일 인코딩에 맞췄다.
+#
+# 2026-08-19 재구조화: 실제 사용 환경(VS Code 터미널, Windows Terminal)이
+# 한글 CP949 바이트를 UTF-8로 디코드해 깨진다는 현장 보고가 들어왔다. 그래서
+# .bat/config.env 계열에서 비ASCII 문자 자체를 없앴다 - 파일에 한글이 없으면
+# 인코딩 문제가 성립하지 않는다. chcp는 65001(UTF-8)로 바뀌었고, 파이썬 도구가
+# 내는 한글 진단은 UTF-8로 정상 출력된다. 배치 자신의 메시지는 이제 전부
+# 영문이다. SCRIPT_ENCODING은 "ascii"로 남기지만, 핵심 불변조건은 인코딩
+# 자체가 아니라 "비ASCII 바이트가 0"이라는 사실이다(아래 참조).
+SCRIPT_ENCODING = "ascii"
 
 
 def read(name: str) -> str:
@@ -190,26 +198,28 @@ def test_config_example_documents_mmproj_file():
 
 
 def test_batch_files_pin_the_console_codepage_to_the_file_encoding():
-    # 파일은 CP949로 저장한다(SCRIPT_ENCODING 주석 참조). 콘솔 코드페이지가
-    # 그와 다르면 한글 echo가 깨지므로 chcp 949를 @echo off 바로 다음,
+    # 파일은 이제 순수 ASCII다(SCRIPT_ENCODING 주석 참조) - 그래서 콘솔을
+    # UTF-8(65001)로 맞출 수 있다. chcp 65001을 @echo off 바로 다음,
     # setlocal보다 앞에 둔다.
     for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
-        assert "chcp 949" in body, name
-        assert "chcp 65001" not in body, name
+        assert "chcp 65001" in body, name
+        assert "chcp 949" not in body, name
         index_echo_off = body.index("@echo off")
-        index_chcp = body.index("chcp 949")
+        index_chcp = body.index("chcp 65001")
         index_setlocal = body.index("setlocal")
         assert index_echo_off < index_chcp < index_setlocal, name
 
 
 def test_python_callers_pin_the_output_encoding_to_the_console_codepage():
-    # 콘솔이 CP949이므로 파이썬 출력도 CP949로 고정한다. utf-8로 두면 한글
-    # 진행 메시지와 evidence\\manifest-check.txt가 깨진다.
+    # 콘솔이 UTF-8(65001)이므로 파이썬 출력도 UTF-8로 고정한다. 파이썬 도구
+    # (tools/*.py)는 UTF-8 소스이고 한글 진행 메시지를 그대로 낸다 - 콘솔이
+    # UTF-8이면 정상 출력되고, evidence\\manifest-check.txt 같은 리다이렉트
+    # 파일도 UTF-8로 남는다.
     for name in ("start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
-        assert "PYTHONIOENCODING=cp949" in body, name
-        index_pin = body.index("PYTHONIOENCODING=cp949")
+        assert "PYTHONIOENCODING=utf-8" in body, name
+        index_pin = body.index("PYTHONIOENCODING=utf-8")
         index_python_call = body.index("%PYTHON_CMD%")
         assert index_pin < index_python_call, name
 
@@ -233,10 +243,16 @@ def test_batch_files_use_crlf_line_endings():
         assert raw.replace(b"\r\n", b"") .count(b"\n") == 0, f"{name}에 CR 없는 LF 줄이 있다"
 
 
-def test_batch_files_that_carry_hangul_must_be_crlf_and_single_byte_safe():
+def test_batch_files_carry_zero_non_ascii_bytes():
+    # 2026-08-19 재구조화의 핵심 불변조건. VS Code 터미널·Windows Terminal이
+    # UTF-8로 디코드해 CP949 배치 출력을 깨뜨린다는 현장 보고 때문에, 이
+    # 번들의 .bat/config 계열에서 비ASCII 바이트 자체를 없앴다. 파일에
+    # 한글이 없으면 콘솔 코드페이지와 파일 인코딩이 어긋날 여지도 없다.
+    # 인코딩이 "무엇"인지가 아니라 비ASCII 바이트 수가 0인지를 직접 센다.
     for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
-        raw.decode(SCRIPT_ENCODING)  # 선언한 인코딩으로 읽히지 않으면 여기서 터진다
+        non_ascii = [byte for byte in raw if byte > 0x7F]
+        assert non_ascii == [], f"{name}: {len(non_ascii)} non-ASCII byte(s)"
         for number, line in enumerate(raw.split(b"\r\n"), start=1):
             assert b"\n" not in line, f"{name}:{number}"
 
@@ -281,7 +297,7 @@ def test_verify_offline_writes_the_probe_file_it_asks_the_model_to_read(tmp_path
     index_prompt = body.index("-p \"%PROBE%")
     assert index_write < index_prompt, "프로브를 쓰기 전에 읽으라고 시킨다"
     # 프롬프트에는 절대 경로(%PROBE%)가 들어가야 한다. 상대 경로 evidence\probe.txt는 금지.
-    assert "evidence\\probe.txt 파일을" not in body
+    assert "evidence\\probe.txt" not in body
 
 
 def test_verify_offline_probe_word_is_unique_and_checked_in_the_summary():
@@ -444,15 +460,12 @@ def test_config_env_is_loaded_through_an_executable_copy():
 
 
 def test_config_files_are_stored_in_the_declared_script_encoding():
+    # SCRIPT_ENCODING이 "ascii"이므로, 선언한 인코딩으로 읽힌다는 것 자체가
+    # 비ASCII 바이트가 없다는 뜻이다(위 test_batch_files_carry_zero_non_ascii_bytes와
+    # 같은 불변조건을 다른 경로로 다시 확인한다).
     for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         raw.decode(SCRIPT_ENCODING)
-        if any(byte > 0x7F for byte in raw):
-            try:
-                raw.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            raise AssertionError(f"{name}이 UTF-8로도 읽힌다 - CP949로 저장되지 않았다")
 
 
 # --- 2026-08-18 재리뷰: pi.exe를 띄우기 전에 LLAMA_BASE_URL을 지운다 ---
@@ -620,8 +633,8 @@ def test_install_python_packages_requires_python_312_with_pip():
     assert "sys.version_info[:2] == (3, 12)" in validate
     assert "import pip" in validate
     assert validate.count("exit /b 1") == 3, "세 실패 각각이 따로 종료해야 한다"
-    assert "Python 3.12가 아니다" in validate
-    assert "pip이 없다" in validate
+    assert "not Python 3.12" in validate
+    assert "this Python has no pip" in validate
     assert "print(sys.version)" in validate, "무엇이 잡혔는지 실제 버전을 보여야 한다"
     # venv 파이썬도 같은 검사를 통과해야 한다.
     assert body.count("call :validate_python") == 2
@@ -830,7 +843,7 @@ def test_verify_offline_proves_the_extensions_actually_loaded():
     index_list = body.index('pi.exe" list')
     assert index_sync < index_list, "동기화가 목록 확인보다 먼저여야 한다"
     # 요약 안내도 그 파일을 가리켜야 운영자가 무엇을 볼지 안다.
-    assert "pi-packages.txt" in body[body.index("확인할 것") :]
+    assert "pi-packages.txt" in body[body.index("Check:") :]
 
 
 def test_pi_packages_settings_template_declares_the_four_required_packages():

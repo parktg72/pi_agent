@@ -106,7 +106,7 @@ start-llama.bat
 이 창은 서버가 사는 곳이므로 리허설 내내 닫지 않는다.
 
 **기대 결과:**
-- 콘솔에 `[info] cuda 백엔드로 Qwen3.8-27B-Q4_K_M.gguf 를 qwen3.8-27b 로 올린다`가
+- 콘솔에 `[info] starting Qwen3.8-27B-Q4_K_M.gguf as qwen3.8-27b on the cuda backend`가
   찍히고, 이어서 llama.cpp의 정상 기동 로그(레이어별 텐서 배치, KV 캐시
   크기, `main: server is listening on http://127.0.0.1:8080` 류의 메시지)가
   나온다.
@@ -121,7 +121,7 @@ start-llama.bat
 - 모델 적재에 걸린 시간(콘솔 타임스탬프 또는 스톱워치로 체감 측정).
 
 **실패 시 다음에 볼 것:**
-- `[FAIL] ...llama-server.exe 없음` → 레이아웃이 깨졌다. §1의 매니페스트
+- `[FAIL] ...llama-server.exe not found` → 레이아웃이 깨졌다. §1의 매니페스트
   검증부터 다시.
 - 드라이버/CUDA 관련 오류 문자열(`CUDA error`, `no kernel image is
   available` 등) → §0에서 잰 드라이버 버전이 551.61 미만이거나, 잘못된
@@ -212,7 +212,7 @@ mode`, 동봉 `bin\pi\docs\llama-cpp.md`도 "Start `llama-server` without
 **실패 시 다음에 볼 것:**
 - 목록에 `local/...`이 전혀 없다 → `home\agent\models.json`이 실제로
   놓였는지, JSON이 유효한지 본다. `start-pi.bat`은 파일이 없으면
-  `[FAIL] ...models.json 없음`으로 멈춘다.
+  `[FAIL] ...models.json not found`으로 멈춘다.
 - 모델은 보이는데 "auth" 관련 사유로 선택 불가 → `models.json`의
   `apiKey` 더미 값이 사라졌는지 확인한다. 키 없는 로컬 서버라도 값이
   있어야 목록에 살아 있다(상류 `bin\pi\docs\models.md`).
@@ -389,7 +389,7 @@ start-pi.bat
   실사용에 버틸 만한 속도인지 여기서 감을 잡는다.
 
 **실패 시 다음에 볼 것:**
-- `[FAIL] 모델이 준비되지 않았다` → 관문 ②가 사실 실패였거나 600초
+- `[FAIL] the model is not ready` → 관문 ②가 사실 실패였거나 600초
   타임아웃 안에 적재가 안 끝난 것. 모델이 15.66GB라 디스크가 느리면
   적재 자체가 오래 걸릴 수 있다 — §0에서 디스크 여유/속도도 함께
   본다.
@@ -423,10 +423,10 @@ start-pi.bat
   드러내 보이려는 것이기 때문이다. **여기서 라우터 모드
   (`--models-dir`)로 바꾸지 마라** — 무인 기동의 결정성과 mmproj 평면
   배치 결정을 함께 깨뜨린다(스펙 §5.1, §6).
-- 파이썬 관련 오류(`Python을 찾지 못했다`, import 실패) → §0의 파이썬
+- 파이썬 관련 오류(`could not find Python`, import 실패) → §0의 파이썬
   행으로 돌아간다. `bin\python\python.exe`가 번들에 있으면 그것이 먼저
   쓰인다. `config.env`의 `PYTHON_CMD`로 강제 지정할 수도 있다.
-- `[FAIL] PI_MODEL_ID 미설정` → `config.env`를 채우지 않았거나, 채웠는데도
+- `[FAIL] PI_MODEL_ID is not set` → `config.env`를 채우지 않았거나, 채웠는데도
   적용되지 않은 것이다. 후자라면 `home\agent\config.cmd`가 만들어졌는지
   본다 — `.bat`은 `config.env`를 그 `.cmd` 사본을 거쳐 읽는다(스펙 §5.2).
 

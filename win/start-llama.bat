@@ -1,8 +1,8 @@
 @echo off
-chcp 949 >nul
+chcp 65001 >nul
 setlocal
 set "ROOT=%~dp0"
-rem 상대 경로가 호출 시점의 cwd가 아니라 번들 루트를 기준으로 풀리게 한다.
+rem Relative paths must resolve against the bundle root, not the caller's cwd.
 cd /d "%ROOT%"
 call :load_config
 if errorlevel 1 exit /b 6
@@ -13,23 +13,23 @@ if not defined LLAMA_CTX set "LLAMA_CTX=32768"
 
 set "LLAMA_DIR=%ROOT%bin\llama-%LLAMA_BACKEND%"
 if not exist "%LLAMA_DIR%\llama-server.exe" (
-  echo [FAIL] %LLAMA_DIR%\llama-server.exe 없음
+  echo [FAIL] %LLAMA_DIR%\llama-server.exe not found
   exit /b 2
 )
 if not defined MODEL_FILE (
-  echo [FAIL] MODEL_FILE 미설정 - config.env를 채워라
+  echo [FAIL] MODEL_FILE is not set - fill in config.env
   exit /b 2
 )
 if not defined MODEL_ALIAS (
-  echo [FAIL] MODEL_ALIAS 미설정 - config.env를 채워라
+  echo [FAIL] MODEL_ALIAS is not set - fill in config.env
   exit /b 2
 )
 if not exist "%ROOT%models\%MODEL_FILE%" (
-  echo [FAIL] %ROOT%models\%MODEL_FILE% 없음
+  echo [FAIL] %ROOT%models\%MODEL_FILE% not found
   exit /b 2
 )
 if defined MMPROJ_FILE if not exist "%ROOT%models\%MMPROJ_FILE%" (
-  echo [FAIL] %ROOT%models\%MMPROJ_FILE% 없음
+  echo [FAIL] %ROOT%models\%MMPROJ_FILE% not found
   exit /b 2
 )
 
@@ -39,7 +39,7 @@ if defined GPU_TENSOR_SPLIT set "TS_ARG=-ts %GPU_TENSOR_SPLIT%"
 set "MMPROJ_ARG="
 if defined MMPROJ_FILE set MMPROJ_ARG=--mmproj "%ROOT%models\%MMPROJ_FILE%"
 
-echo [info] %LLAMA_BACKEND% 백엔드로 %MODEL_FILE% 를 %MODEL_ALIAS% 로 올린다
+echo [info] starting %MODEL_FILE% as %MODEL_ALIAS% on the %LLAMA_BACKEND% backend
 "%LLAMA_DIR%\llama-server.exe" ^
   -m "%ROOT%models\%MODEL_FILE%" ^
   --alias "%MODEL_ALIAS%" ^
@@ -53,16 +53,17 @@ echo [info] %LLAMA_BACKEND% 백엔드로 %MODEL_FILE% 를 %MODEL_ALIAS% 로 올린다
 exit /b %errorlevel%
 
 :load_config
-rem cmd의 call은 .bat/.cmd 확장자만 배치로 실행한다. .env를 그대로 call하면
-rem 아무 일도 하지 않고 errorlevel 0으로 돌아온다 - 2026-08-18 윈도우 실측:
-rem config.env의 모든 set이 무시되어 MODEL_ALIAS가 끝내 비어 있었다.
-rem 운영자에게 익숙한 파일명을 유지하면서 실제로 실행되게 하려고, 가변 영역에
-rem .cmd 사본을 만들어 그것을 call한다. 사본은 매번 원본에서 다시 만든다.
+rem cmd's call only executes .bat/.cmd extensions as batch. Calling .env as-is
+rem does nothing and returns errorlevel 0 - 2026-08-18 Windows measurement:
+rem every set in config.env was ignored and MODEL_ALIAS stayed empty.
+rem To keep the filename operators are used to while making it actually run,
+rem a .cmd copy is made in the mutable area and that is called instead. The
+rem copy is remade from the source every time.
 if not exist "%ROOT%config.env" goto :eof
 if not exist "%ROOT%home\agent" mkdir "%ROOT%home\agent"
 copy /y "%ROOT%config.env" "%ROOT%home\agent\config.cmd" >nul
 if errorlevel 1 (
-  echo [FAIL] config.env를 실행 가능한 사본으로 복사하지 못했다
+  echo [FAIL] could not copy config.env to a runnable copy
   exit /b 1
 )
 call "%ROOT%home\agent\config.cmd"
