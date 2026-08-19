@@ -103,6 +103,7 @@ H:\model\pi_agent\            →  폐쇄망 PC의 C:\pi_agent\
 ├── .venv\                    install-python-packages.bat의 기본 설치 대상 (가변, 대상 PC에서 생성)
 ├── start-llama.bat
 ├── start-pi.bat
+├── verify-bundle.bat          tools\verify_bundle.py를 콘솔 인코딩(chcp 65001)까지 걸어 호출
 ├── verify-offline.bat
 ├── install-python-packages.bat  packages_win\ 를 대상 PC 시스템 Python 3.12에 오프라인 설치
 ├── config.env                운영자가 현장에서 채운다 (해시 범위 밖)

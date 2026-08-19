@@ -52,8 +52,12 @@ PCIe 토폴로지·RAM·디스크, 지속 부하 시 전력·온도)는 아래 �
      디스크에서 올려 600초로 모자라면 여기서 늘린다)
 3. **매니페스트 무결성부터 확인한다** — 전송 중 손상은 여기서 잡는다(§10):
    ```
-   bin\python\python.exe tools\verify_bundle.py --root .
+   verify-bundle.bat
    ```
+   **`bin\python\python.exe tools\verify_bundle.py --root .`을 직접 부르지
+   않는다** — `chcp 65001`과 `PYTHONIOENCODING=utf-8`이 빠져 파이썬 출력이
+   콘솔 기본 코드페이지(CP949)로 나가고 한글 진단이 깨진다(2026-08-18
+   윈도우 실측). `verify-bundle.bat`은 이 배치를 걸어 준다.
    기대 결과: `[ok] N개 파일이 매니페스트와 일치한다`. **N을 이 문서에
    박아 두지 않는다** — 스테이징을 다시 하면 바뀐다. 확인 방법은 이
    번들의 `STAGING_MANIFEST.json`을 열어 `totals.files` 값을 읽고, 위

@@ -9,7 +9,7 @@
 | # | 실행할 것 | 언제 | 창 |
 |---|---|---|---|
 | 0 | 번들을 `C:\pi_agent` 로 복사 | 최초 1회 | — |
-| 1 | `bin\python\python.exe tools\verify_bundle.py --root .` | 최초 1회 | 아무 창 |
+| 1 | `verify-bundle.bat` | 최초 1회 | 아무 창 |
 | 2 | `config.env` 의 `GPU_TENSOR_SPLIT` 채우기 | 최초 1회 | — |
 | 3 | `install-python-packages.bat` | 파이썬 작업이 필요할 때만 | 아무 창 |
 | 4 | `start-llama.bat` | **매번**, 가장 먼저 | 전용 창 — 닫지 않는다 |
@@ -20,7 +20,12 @@
 
 **1 — 무결성 검사가 먼저다.** 전송 중 손상은 여기서만 잡힌다. 출력의 파일 수가
 `STAGING_MANIFEST.json` 의 `totals.files` 와 같아야 한다. 다르면 **거기서 멈추고
-다시 복사한다** — 뒤 단계는 전부 무의미해진다.
+다시 복사한다** — 뒤 단계는 전부 무의미해진다. **반드시 `verify-bundle.bat`
+으로 실행한다 — `bin\python\python.exe tools\verify_bundle.py` 를 직접 부르지
+않는다.** 이 배치를 거치지 않으면 콘솔 코드페이지 지정(`chcp 65001`)과
+`PYTHONIOENCODING=utf-8` 이 빠져 파이썬 출력이 콘솔 기본 코드페이지(한국어
+윈도우면 CP949)로 나가고, 한글 진단 메시지가 깨진다(2026-08-18 윈도우 실측 —
+"간단하니 직접 부르자"로 되돌리지 마라).
 
 **2 — 현장에서 채울 값은 `GPU_TENSOR_SPLIT` 하나다.** 나머지(`MODEL_FILE`,
 `MODEL_ALIAS`, `PI_MODEL_ID`, `MMPROJ_FILE`, `MODEL_LOAD_TIMEOUT`)는 반입 시점에
@@ -93,7 +98,7 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 
 ## 파이썬
 
-`start-pi.bat` 과 `verify-offline.bat` 은 파이썬을 쓴다. 찾는 순서는
+`start-pi.bat`, `verify-bundle.bat`, `verify-offline.bat` 은 파이썬을 쓴다. 찾는 순서는
 `config.env` 의 `PYTHON_CMD` → 번들 내장 `bin\python\python.exe` →
 `py -3.12` → `python` 이다. 번들이 파이썬 3.12 임베디드 배포를 들고 다니므로
 대상 PC에 파이썬이 없어도, Microsoft Store 앱 실행 별칭 스텁이 잡혀도 동작한다.
@@ -105,8 +110,9 @@ PC의 시스템 Python 3.12를 쓰고, `PYTHON_CMD` 로 지정된 것도 3.12인
 
 ## 콘솔 인코딩
 
-`.bat` 파일(`start-llama.bat`, `start-pi.bat`, `verify-offline.bat`,
-`install-python-packages.bat`)과 `config.env` / `config.env.example` 은 이제
+`.bat` 파일(`start-llama.bat`, `start-pi.bat`, `verify-bundle.bat`,
+`verify-offline.bat`, `install-python-packages.bat`)과
+`config.env` / `config.env.example` 은 이제
 순수 ASCII다 — 배치 자신이 내는 메시지(`[FAIL]`, `[info]`, `[warn]` 등)는
 전부 영문이다. 그래서 콘솔 코드페이지를 `chcp 65001`(UTF-8)로 맞춰도 배치
 자신의 출력은 깨지지 않는다.

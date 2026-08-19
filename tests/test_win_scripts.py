@@ -29,6 +29,7 @@ ALL_BATCH_FILES = (
     "install-python-packages.bat",
     "start-llama.bat",
     "start-pi.bat",
+    "verify-bundle.bat",
     "verify-offline.bat",
 )
 
@@ -133,7 +134,7 @@ def test_start_pi_waits_for_the_model_before_launching():
 
 
 def test_batch_files_resolve_python_before_using_it():
-    for name in ("start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
+    for name in ("start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert "PYTHON_CMD" in body, name
         assert "py -3.12" in body, name
@@ -153,7 +154,7 @@ def test_manifest_verification_is_never_reimplemented_in_powershell():
 
 
 def test_no_script_mentions_cuda_13():
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "config.env.example"):
         assert "cuda-13" not in read(name).lower()
 
 
@@ -201,7 +202,7 @@ def test_batch_files_pin_the_console_codepage_to_the_file_encoding():
     # 파일은 이제 순수 ASCII다(SCRIPT_ENCODING 주석 참조) - 그래서 콘솔을
     # UTF-8(65001)로 맞출 수 있다. chcp 65001을 @echo off 바로 다음,
     # setlocal보다 앞에 둔다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert "chcp 65001" in body, name
         assert "chcp 949" not in body, name
@@ -216,7 +217,7 @@ def test_python_callers_pin_the_output_encoding_to_the_console_codepage():
     # (tools/*.py)는 UTF-8 소스이고 한글 진행 메시지를 그대로 낸다 - 콘솔이
     # UTF-8이면 정상 출력되고, evidence\\manifest-check.txt 같은 리다이렉트
     # 파일도 UTF-8로 남는다.
-    for name in ("start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
+    for name in ("start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert "PYTHONIOENCODING=utf-8" in body, name
         index_pin = body.index("PYTHONIOENCODING=utf-8")
@@ -226,7 +227,7 @@ def test_python_callers_pin_the_output_encoding_to_the_console_codepage():
 
 def test_batch_files_carry_no_byte_order_mark():
     # BOM은 cmd.exe에서 @echo off를 포함한 첫 줄을 깨뜨린다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         assert not raw.startswith(b"\xef\xbb\xbf"), name
 
@@ -237,7 +238,7 @@ def test_batch_files_use_crlf_line_endings():
     # 2026-08-18 윈도우 실측: LF 판 start-llama.bat은 config.env 호출과 echo가
     # 전부 깨졌고("'?라'은(는) 내부 또는 외부 명령이 아닙니다"), 바이트만 CRLF로
     # 바꾼 같은 파일은 정상 동작했다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         assert b"\n" in raw, name
         assert raw.replace(b"\r\n", b"") .count(b"\n") == 0, f"{name}에 CR 없는 LF 줄이 있다"
@@ -249,7 +250,7 @@ def test_batch_files_carry_zero_non_ascii_bytes():
     # 번들의 .bat/config 계열에서 비ASCII 바이트 자체를 없앴다. 파일에
     # 한글이 없으면 콘솔 코드페이지와 파일 인코딩이 어긋날 여지도 없다.
     # 인코딩이 "무엇"인지가 아니라 비ASCII 바이트 수가 0인지를 직접 센다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         non_ascii = [byte for byte in raw if byte > 0x7F]
         assert non_ascii == [], f"{name}: {len(non_ascii)} non-ASCII byte(s)"
@@ -276,7 +277,7 @@ def test_no_batch_file_passes_a_trailing_backslash_root_to_a_program():
     #   --root "C:\\pi_agent\\."  -> ARGV: ['--root', 'C:\\pi_agent\\.']  (정상)
     # %~dp0는 항상 역슬래시로 끝나므로 "%ROOT%"를 그대로 넘기면 닫는 따옴표가
     # 이스케이프되어 argv가 깨진다.
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert '--root "%ROOT%"' not in body, name
         for line in _external_invocation_lines(body):
@@ -285,6 +286,30 @@ def test_no_batch_file_passes_a_trailing_backslash_root_to_a_program():
 
 def test_verify_offline_terminates_the_root_path_before_passing_it():
     assert '--root "%ROOT%."' in read("verify-offline.bat")
+
+
+def test_verify_bundle_terminates_the_root_path_before_passing_it():
+    # win/README-폐쇄망.md 1단계가 파이썬을 직접 부르던 것을 이 스크립트로
+    # 대체한 이유가 바로 이 함정이다(verify-offline.bat과 같은 실측).
+    assert '--root "%ROOT%."' in read("verify-bundle.bat")
+
+
+def test_verify_bundle_calls_verify_bundle_py_with_pinned_encoding():
+    body = read("verify-bundle.bat")
+    assert "tools\\verify_bundle.py" in body
+    assert "PYTHONIOENCODING=utf-8" in body
+    assert "%PYTHON_CMD%" in body
+    index_pin = body.index("PYTHONIOENCODING=utf-8")
+    index_call = body.index("tools\\verify_bundle.py")
+    assert index_pin < index_call
+
+
+def test_verify_bundle_returns_the_python_exit_code_unchanged():
+    body = read("verify-bundle.bat")
+    assert "exit /b %errorlevel%" in body
+    index_call = body.index("tools\\verify_bundle.py")
+    index_exit = body.index("exit /b %errorlevel%")
+    assert index_call < index_exit
 
 
 # --- B4: verify-offline.bat이 스스로 프로브를 쓰고, 미설정을 거부하고, 루트로 이동한다 ---
@@ -413,7 +438,7 @@ def test_wait_model_still_polls_the_bare_alias_on_v1_models():
 # --- B1: 번들 내장 파이썬을 가장 먼저 쓴다 ---
 
 def test_batch_files_prefer_the_bundled_python_runtime():
-    for name in ("start-pi.bat", "verify-offline.bat"):
+    for name in ("start-pi.bat", "verify-bundle.bat", "verify-offline.bat"):
         body = read(name)
         assert 'if not exist "%ROOT%bin\\python\\python.exe" goto :resolve_python_system' in body, name
         assert 'set "PYTHON_CMD="%ROOT%bin\\python\\python.exe""' in body, name
@@ -424,7 +449,7 @@ def test_batch_files_prefer_the_bundled_python_runtime():
 
 
 def test_user_supplied_python_cmd_still_wins():
-    for name in ("start-pi.bat", "verify-offline.bat"):
+    for name in ("start-pi.bat", "verify-bundle.bat", "verify-offline.bat"):
         body = read(name)
         index_user = body.index("if defined PYTHON_CMD goto :eof")
         index_bundled = body.index("bin\\python\\python.exe")
@@ -463,7 +488,7 @@ def test_config_files_are_stored_in_the_declared_script_encoding():
     # SCRIPT_ENCODING이 "ascii"이므로, 선언한 인코딩으로 읽힌다는 것 자체가
     # 비ASCII 바이트가 없다는 뜻이다(위 test_batch_files_carry_zero_non_ascii_bytes와
     # 같은 불변조건을 다른 경로로 다시 확인한다).
-    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
+    for name in ("start-llama.bat", "start-pi.bat", "verify-bundle.bat", "verify-offline.bat", "config.env.example", "install-python-packages.bat"):
         raw = (WIN / name).read_bytes()
         raw.decode(SCRIPT_ENCODING)
 
