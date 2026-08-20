@@ -160,6 +160,10 @@ def test_main_wires_roundtrip_rc_from_argv(evidence, tmp_path):
         "--alias", ALIAS,
         "--probe-word", PROBE,
         "--packages-file", str(packages_file),
+        "--manifest-rc", "0",
+        "--render-rc", "0",
+        "--sync-rc", "0",
+        "--pi-list-rc", "0",
         "--roundtrip-rc", "23",
     ]
     assert verify_gate.main(argv) == 1
@@ -182,6 +186,11 @@ def test_main_returns_nonzero_and_names_the_failing_checks(evidence, capsys, tmp
         "--alias", ALIAS,
         "--probe-word", PROBE,
         "--packages-file", str(packages_file),
+        "--manifest-rc", "0",
+        "--render-rc", "0",
+        "--sync-rc", "0",
+        "--pi-list-rc", "0",
+        "--roundtrip-rc", "0",
     ]
     assert verify_gate.main(argv) == 0
     assert "PASS" in capsys.readouterr().out
@@ -201,7 +210,16 @@ def test_an_unreadable_package_list_is_a_failure_not_a_free_pass(evidence):
 
 def test_a_run_without_the_bundled_package_list_does_not_pass(evidence, capsys):
     assert verify_gate.main(
-        ["--evidence", str(evidence), "--alias", ALIAS, "--probe-word", PROBE]
+        [
+            "--evidence", str(evidence),
+            "--alias", ALIAS,
+            "--probe-word", PROBE,
+            "--manifest-rc", "0",
+            "--render-rc", "0",
+            "--sync-rc", "0",
+            "--pi-list-rc", "0",
+            "--roundtrip-rc", "0",
+        ]
     ) == 1
 
 
@@ -215,8 +233,108 @@ def test_the_summary_lists_every_check_by_name(evidence, capsys, tmp_path):
             "--alias", ALIAS,
             "--probe-word", PROBE,
             "--packages-file", str(packages_file),
+            "--manifest-rc", "0",
+            "--render-rc", "0",
+            "--sync-rc", "0",
+            "--pi-list-rc", "0",
+            "--roundtrip-rc", "0",
         ]
     )
     out = capsys.readouterr().out
     for name in ("번들 무결성", "models.json 생성", "패키지 트리 동기화", ALIAS, "확장/스킬 4종", "Pi 툴 왕복"):
         assert name in out
+
+
+def test_required_manifest_rc_missing_causes_system_exit():
+    """--manifest-rc 인자가 없으면 argparse가 SystemExit을 발생시킨다."""
+    argv = [
+        "--evidence", "/tmp",
+        "--alias", "test-model",
+        "--probe-word", "TEST",
+        "--render-rc", "0",
+        "--sync-rc", "0",
+        "--pi-list-rc", "0",
+        "--roundtrip-rc", "0",
+    ]
+    with pytest.raises(SystemExit):
+        verify_gate.main(argv)
+
+
+def test_required_render_rc_missing_causes_system_exit():
+    """--render-rc 인자가 없으면 argparse가 SystemExit을 발생시킨다."""
+    argv = [
+        "--evidence", "/tmp",
+        "--alias", "test-model",
+        "--probe-word", "TEST",
+        "--manifest-rc", "0",
+        "--sync-rc", "0",
+        "--pi-list-rc", "0",
+        "--roundtrip-rc", "0",
+    ]
+    with pytest.raises(SystemExit):
+        verify_gate.main(argv)
+
+
+def test_required_sync_rc_missing_causes_system_exit():
+    """--sync-rc 인자가 없으면 argparse가 SystemExit을 발생시킨다."""
+    argv = [
+        "--evidence", "/tmp",
+        "--alias", "test-model",
+        "--probe-word", "TEST",
+        "--manifest-rc", "0",
+        "--render-rc", "0",
+        "--pi-list-rc", "0",
+        "--roundtrip-rc", "0",
+    ]
+    with pytest.raises(SystemExit):
+        verify_gate.main(argv)
+
+
+def test_required_pi_list_rc_missing_causes_system_exit():
+    """--pi-list-rc 인자가 없으면 argparse가 SystemExit을 발생시킨다."""
+    argv = [
+        "--evidence", "/tmp",
+        "--alias", "test-model",
+        "--probe-word", "TEST",
+        "--manifest-rc", "0",
+        "--render-rc", "0",
+        "--sync-rc", "0",
+        "--roundtrip-rc", "0",
+    ]
+    with pytest.raises(SystemExit):
+        verify_gate.main(argv)
+
+
+def test_required_roundtrip_rc_missing_causes_system_exit():
+    """--roundtrip-rc 인자가 없으면 argparse가 SystemExit을 발생시킨다."""
+    argv = [
+        "--evidence", "/tmp",
+        "--alias", "test-model",
+        "--probe-word", "TEST",
+        "--manifest-rc", "0",
+        "--render-rc", "0",
+        "--sync-rc", "0",
+        "--pi-list-rc", "0",
+    ]
+    with pytest.raises(SystemExit):
+        verify_gate.main(argv)
+
+
+def test_verify_offline_bat_includes_all_five_rc_args():
+    """verify-offline.bat이 다섯 인자를 모두 전달한다."""
+    bat_path = Path(__file__).resolve().parents[1] / "win" / "verify-offline.bat"
+    bat_content = bat_path.read_text(encoding="utf-8")
+
+    # 다섯 인자가 모두 포함되어 있어야 한다.
+    assert "--manifest-rc" in bat_content, "verify-offline.bat에 --manifest-rc 인자가 없다"
+    assert "--render-rc" in bat_content, "verify-offline.bat에 --render-rc 인자가 없다"
+    assert "--sync-rc" in bat_content, "verify-offline.bat에 --sync-rc 인자가 없다"
+    assert "--pi-list-rc" in bat_content, "verify-offline.bat에 --pi-list-rc 인자가 없다"
+    assert "--roundtrip-rc" in bat_content, "verify-offline.bat에 --roundtrip-rc 인자가 없다"
+
+    # 다섯 인자가 모두 변수 참조와 함께 전달되어야 한다.
+    assert "--manifest-rc !MANIFEST_RC!" in bat_content
+    assert "--render-rc !RENDER_RC!" in bat_content
+    assert "--sync-rc !SYNC_RC!" in bat_content
+    assert "--pi-list-rc !PI_LIST_RC!" in bat_content
+    assert "--roundtrip-rc !ROUNDTRIP_RC!" in bat_content
