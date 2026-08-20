@@ -50,21 +50,37 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 `C:\pi_agent` 자신이 프로젝트가 되어 정작 작업 대상을 못 본다. 모델이
 준비되기 전에는 Pi가 뜨지 않으므로, 4번을 건너뛰면 여기서 기다리다 실패한다.
 
-**6 — 판정은 종료 코드가 아니라 `evidence\` 안의 내용이다.** 넷을 확인한다.
+**6 — `verify-offline.bat` 이 마지막에 판정을 찍고, 실패하면 nonzero로 끝난다.**
 
-| 파일 | 통과 기준 |
+콘솔 마지막의 `=== 판정 요약 ===` 이 항목별로 `[PASS]`/`[FAIL]` 을 적는다.
+파일 넷을 눈으로 대조하지 않아도 무엇이 깨졌는지 거기서 안다.
+
+| 항목 | 무엇을 보나 |
 |---|---|
-| `manifest-check.txt` | 매니페스트와 일치 |
-| `v1-models.json` | `qwen3.8-27b` 가 있다 |
-| `pi-tool-roundtrip.json` | 최종 답변에 `NARWHAL-7Q2X` 가 있다 |
-| `pi-packages.txt` | 확장·스킬 4종이 나열된다 |
+| 번들 무결성 | `manifest-check.txt` — 매니페스트와 일치 |
+| models.json 생성 | `config.env` 의 포트·alias로 `home\agent\models.json` 이 만들어졌다 |
+| 패키지 트리 동기화 | `pi-packages\` 전량이 `home\agent\` 에 경로·크기·해시까지 같게 놓였다 |
+| `/v1/models` 의 alias | `v1-models.json` 에 `MODEL_ALIAS` 가 있다 |
+| 확장/스킬 4종 | `pi-packages.txt` 에 4종이 나열된다 |
+| Pi 툴 왕복 | `pi-tool-roundtrip.json` 의 이벤트가 성립한다 (아래) |
 
-`pi-tool-roundtrip.json` 의 낱말은 스크립트가 직접 쓴 프로브 파일에서 온다 —
-모델이 파일을 못 읽고 지어냈다면 그 낱말이 나올 수 없다.
+툴 왕복은 **Pi의 종료 코드로 판정하지 않는다.** `pi.exe` 는 `stopReason: error`
+와 `Connection error.` 를 낸 직후에도 0을 반환한 적이 있다(2026-08-19 실측).
+대신 JSON 이벤트를 본다: `stopReason` 이 error가 아닐 것, 최종 assistant 응답이
+있을 것, 토큰 수가 양수일 것, 도구 호출과 그 결과가 있을 것, 최종 답변에
+`NARWHAL-7Q2X` 가 있을 것. 그 낱말은 스크립트가 직접 쓴 프로브 파일에서 온다 —
+모델이 파일을 못 읽고 지어냈다면 나올 수 없다.
 
-`config.env` 는 현장에서 값을 채우는 파일이라 `STAGING_MANIFEST.json` 의 해시
-범위에서 **제외**돼 있다. 값을 고쳐도 `verify-offline.bat` 의 무결성 검사는
-조용해야 정상이다. 반대로 검사가 무언가를 지적하면 그것은 진짜 전송 손상이다.
+두 가지는 여전히 눈으로 본다: `nvidia-smi.txt` 의 드라이버 버전(551.61 이상)과
+`pktmon.txt` 의 외부 주소 시도 0건.
+
+증거 수집은 중간에 멈추지 않는다. 어느 단계가 실패해도 나머지 단계를 끝까지
+돌고 마지막에 한 번에 판정한다 — 실패한 이유를 설명하는 증거를 버리지 않기
+위해서다.
+
+무결성 검사가 무언가를 지적하면 그것은 진짜 전송 손상이다 — `config.env` 는
+해시 범위 밖이므로 값을 고친 것 때문에 빨간불이 뜨지는 않는다(아래
+"`config.env` 는 실행되지 않는다" 절).
 
 ## 모델 ID 두 개가 반드시 맞아야 한다
 
@@ -85,16 +101,69 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 있기를 요구한다(`--models-dir` 로 띄우고 모델을 API로 적재하는 방식). 이
 번들은 무인 기동의 결정성을 위해 `-m` 단일 모델 모드로 띄우므로 그 경로를 쓸
 수 없다. 대신 번들 루트의 `models.json` 이 OpenAI 호환 엔드포인트를 제공자
-`local` 로 **정적 선언**한다. `start-pi.bat` 과 `verify-offline.bat` 이 실행할
-때마다 이 원본을 `home\agent\models.json` 으로 덮어쓰므로, 설정은 항상
-매니페스트가 검증한 원본에서 나온다. `home\agent\models.json` 을 직접 고치지
-마라 — 다음 실행에서 덮어써진다.
+`local` 로 **정적 선언**한다.
 
-`LLAMA_PORT` 를 바꾸면 `models.json` 의 `baseUrl` 포트도 같이 바꿔야 한다.
-`models.json` 은 정적 파일이라 환경변수를 읽지 않는다.
+번들 루트의 `models.json` 은 **템플릿**이다. 포트와 alias 자리에
+`${LLAMA_PORT}`, `${MODEL_ALIAS}` 자리표시자가 들어 있고, `start-pi.bat` 과
+`verify-offline.bat` 이 실행할 때마다 `config.env` 의 값으로 렌더링해
+`home\agent\models.json` 을 새로 쓴다. 그래서 포트와 alias의 출처는
+`config.env` 하나뿐이다.
+
+**`models.json` 도, `home\agent\models.json` 도 손으로 고치지 마라.** 앞은
+매니페스트 해시 범위 안이라 고치면 무결성 검사가 잡고, 뒤는 다음 실행에서
+덮어써진다. `LLAMA_PORT` 만 바꾸면 둘 다 따라온다.
+
+이 구조 이전에는 포트가 두 곳에 따로 있었고, `LLAMA_PORT` 만 바꾸면 readiness
+폴링은 새 포트로 통과하는데 Pi는 8080으로 붙으려다 실패했다 — 그리고 그
+실패가 exit 0으로 보고됐다(2026-08-19 외부 감사 실측).
 
 > **이 연결 방식은 리허설에서 처음 검증된다.** 정적 제공자 선언이 이 Pi
 > 빌드에서 실제로 동작하는지는 윈도우에서 `pi.exe` 를 돌려봐야만 안다.
+
+## `config.env` 는 실행되지 않는다 — 파싱된다
+
+`config.env` 는 `.bat` 문법으로 생겼지만 **코드로 실행되지 않는다.**
+`tools\config_parse.py` 가 읽어서 검사하고, 통과한 값만 담은 사본을
+`home\agent\config.cmd` 로 내보낸 뒤 그 사본만 `call` 한다.
+
+거부되는 것:
+
+| 무엇 | 왜 |
+|---|---|
+| 허용 목록에 없는 키 | `.bat` 이 읽지 않는 이름이다. 오타가 조용히 무시되는 대신 멈춘다 |
+| 값 안의 `& \| < > ^ % !` 와 `"` | `&` 뒤는 명령으로 실행되고, `%VAR%`·`!VAR!` 는 값에서 소실된다(2026-08-19 실측) |
+| 비ASCII 바이트 | `call` 되는 `.cmd` 에서 cmd.exe의 줄 오프셋 계산이 어긋난다 |
+| 형식이 틀린 값 | 포트 범위, 정수, 백엔드 이름, `<제공자>/<alias>` 형식을 각각 검사한다 |
+| `MODEL_ALIAS` 와 어긋나는 `PI_MODEL_ID` | 서버는 정상인데 Pi만 없는 모델을 요청하게 된다 |
+| `set` 도 주석도 아닌 줄 | 설정 파일에 명령을 적는 길을 남기지 않는다 |
+
+거부되면 어느 줄이 왜 거부됐는지 찍고 **nonzero로 멈춘다.** 거부된 설정으로
+`home\agent\config.cmd` 를 남기지 않으므로, 다음 실행이 옛 사본을 쓰는 일도
+없다.
+
+`config.env` 자체는 현장에서 값을 채우는 파일이라 `STAGING_MANIFEST.json` 의
+해시 범위에서 **제외**돼 있다. 값을 고쳐도 무결성 검사는 조용해야 정상이다.
+
+## 종료 코드
+
+실패는 nonzero로 나온다. 증거는 그대로 남고, 종료 코드는 그 판정을 따른다.
+
+| 코드 | 어디서 | 뜻 |
+|---|---|---|
+| 0 | 전부 | 판정한 항목이 모두 통과했다 |
+| 1 | `verify-offline.bat` | 판정 항목 중 하나 이상이 실패했다. 콘솔 요약이 어느 것인지 적는다 |
+| 2 | `start-llama.bat`, `start-pi.bat` | 필수 파일이 없거나 필수 설정이 비었다 |
+| 3 | `start-pi.bat` | 타임아웃 안에 모델이 `/v1/models` 에 나타나지 않았다 |
+| 4 | 전부 | 쓸 수 있는 파이썬을 찾지 못했다 |
+| 5 | `start-pi.bat` / `install-python-packages.bat` | `models.json` 렌더링 실패 / 오프라인 설치 실패 |
+| 6 | 전부 / `install-python-packages.bat` | `config.env` 가 거부됐다 / 임포트 검증 실패 |
+| 7 | `start-pi.bat` | 패키지 트리가 반입본과 다르다 |
+| 8 | `start-llama.bat` | `LLAMA_BACKEND=vulkan` 은 이 모델에서 금지다 |
+| 9 | `start-llama.bat` | `LLAMA_BACKEND=cpu` 에 `ALLOW_CPU_DIAGNOSTIC=1` 이 없다 |
+
+`pi.exe` 자신의 종료 코드는 `start-pi.bat` 이 그대로 전달한다. 다만 그것을
+성공의 증거로 쓰지는 않는다 — `stopReason: error` 직후에도 0을 반환한 실측이
+있다.
 
 ## 파이썬
 
@@ -102,6 +171,10 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 `config.env` 의 `PYTHON_CMD` → 번들 내장 `bin\python\python.exe` →
 `py -3.12` → `python` 이다. 번들이 파이썬 3.12 임베디드 배포를 들고 다니므로
 대상 PC에 파이썬이 없어도, Microsoft Store 앱 실행 별칭 스텁이 잡혀도 동작한다.
+
+`config.env` 를 읽는 일 자체가 파이썬을 쓰므로, 그 파싱만은 `PYTHON_CMD` 를
+보지 않는다(그 값이 바로 `config.env` 안에 있기 때문이다) — 번들 내장
+`bin\python\python.exe` → `py -3.12` → `python` 순으로 찾는다.
 
 **`install-python-packages.bat` 만은 이 순서를 따르지 않는다.** 임베디드
 배포에는 pip이 없어서 패키지를 설치할 수 없기 때문이다 — 그 스크립트는 대상
@@ -154,13 +227,16 @@ UTF-8로 정상 출력된다.
 ## GPU가 안 잡힐 때
 - `nvidia-smi` 의 드라이버가 551.61 미만이면 CUDA 12.4 빌드가 동작하지 않는다.
 - **이 모델(Qwen3.8-27B, qwen35 아키텍처)에서 CUDA가 안 되면 폴백은 `cpu`뿐이다.
-  `vulkan`으로 바꾸지 마라 — 금지다.** `bin\llama-vulkan`은 이 아키텍처의
+  `vulkan` 은 `start-llama.bat` 이 거부한다(exit 8) — 문서가 아니라 코드가 막는다.** `bin\llama-vulkan`은 이 아키텍처의
   `ggml_ssm_conv`/`ggml_ssm_scan`을 구현하지 않았고, 조용히 CPU로 폴백하면서
   GPU↔CPU 경계에서 상태가 손상된다(상류 이슈 `ggml-org/llama.cpp#19957`,
   2026-02-27 open, 미해결). 결과는 손상된 출력이거나 `vk::DeviceLostError`다.
   `bin\llama-vulkan` 자체는 다른 모델에는 유효하므로 번들에서 빼지 않지만,
   이 모델에는 쓰지 않는다. `cpu`로 바꿔 원인을 좁힌다 — 느리지만 정확하다.
-  30B 모델 실사용 속도가 나오지 않으므로 CPU는 진단용이다.
+  30B 모델 실사용 속도가 나오지 않으므로 CPU는 진단용이고, 그래서
+  `config.env` 에 `ALLOW_CPU_DIAGNOSTIC=1` 을 명시해야만 뜬다(없으면 exit 9).
+  16.8GB를 시스템 RAM에 올리는 일이라 사고로 선택되면 안 된다 — RAM이나
+  페이지파일이 모자라면 실패하는 대신 오래 스래싱한다.
 - `MSVCP140.dll` 관련 오류가 나면 `bin\llama-cuda` 안의 app-local DLL이 지워졌는지 확인한다.
 
 ## Pi 확장·스킬 (pi-packages)
@@ -333,7 +409,7 @@ install-python-packages.bat --user   (전역 사용자 site-packages 에 설치)
 `lightgbm\bin\` 옆에 같은 app-local 방식으로 복사한다. 설치 위치는
 격리/`--user` 에 따라 다르므로 파이썬에게 직접 물어 찾는다.
 
-**실패 시 볼 곳**: 종료 코드가 아니라 `evidence\` 의 두 파일이 판정 기준이다.
+**실패 시 볼 곳**: 설치 실패와 임포트 실패는 이제 각각 종료 코드 5, 6으로 나온다. 무엇이 왜 실패했는지는 `evidence\` 의 두 파일에 있다.
 - `evidence\python-packages-install.txt` — pip 설치 로그 전체. 마지막 줄이
   `Successfully installed`로 끝나는지 확인한다.
 - `evidence\python-packages-check.txt` — `packages_win\requirements.txt` 가

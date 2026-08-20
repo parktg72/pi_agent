@@ -1,7 +1,9 @@
 import re
+import sys
 from pathlib import Path
 
 WIN = Path(__file__).resolve().parents[1] / "win"
+sys.path.insert(0, str(WIN.parent / "tools"))
 
 
 # cmd.exe는 UTF-8(코드페이지 65001) 배치 파일을 읽을 때 줄을 바이트 오프셋으로
@@ -369,52 +371,72 @@ def test_start_pi_does_not_change_directory():
 
 # --- B2: 정적 제공자 선언으로 단일 모델 모드 llama-server를 인식시킨다 ---
 
-def test_models_json_declares_the_local_openai_compatible_provider():
+def test_models_json_is_a_template_whose_port_and_alias_come_from_config():
+    # 2026-08-19 감사: 포트가 config.env와 models.json 두 곳에 따로 있었다.
+    # 포트를 바꾸면 readiness는 새 포트로 통과하고 Pi는 8080으로 붙으려다
+    # 실패했다 - 그것도 exit 0으로. 이제 번들 루트 models.json은 자리표시자를
+    # 가진 템플릿이고, 값의 출처는 config.env 하나다.
     import json
 
     document = json.loads((WIN / "models.json").read_text(encoding="utf-8"))
     provider = document["providers"]["local"]
-    assert provider["baseUrl"] == "http://127.0.0.1:8080/v1"
+    assert provider["baseUrl"] == "http://127.0.0.1:${LLAMA_PORT}/v1"
     assert provider["api"] == "openai-completions"
     assert provider["apiKey"], "키 없는 로컬 서버라도 더미 값이 있어야 /model에 나타난다"
     # 상류 문서가 Ollama/vLLM 같은 OpenAI 호환 서버에 대해 명시하는 두 플래그.
     assert provider["compat"]["supportsDeveloperRole"] is False
     assert provider["compat"]["supportsReasoningEffort"] is False
-    assert [model["id"] for model in provider["models"]] == ["qwen3.8-27b"]
+    assert [model["id"] for model in provider["models"]] == ["${MODEL_ALIAS}"]
+    # 포트가 어디에도 박혀 있으면 안 된다 - 그것이 두 번째 출처가 된다.
+    assert "8080" not in (WIN / "models.json").read_text(encoding="utf-8")
 
 
-def test_models_json_base_url_port_matches_the_configured_default():
+def test_rendering_the_template_with_the_example_config_actually_agrees():
+    # 문자열 검사가 아니라 실제 렌더링으로 본다: config.env.example의 값으로
+    # 템플릿을 렌더링하면 그 포트와 alias를 가진 유효한 models.json이 나오고,
+    # PI_MODEL_ID가 그 문서 안에서 해석된다.
     import json
     import re
 
-    document = json.loads((WIN / "models.json").read_text(encoding="utf-8"))
-    base_url = document["providers"]["local"]["baseUrl"]
+    import render_models_json
+
     example = read("config.env.example")
     port = re.search(r'set "LLAMA_PORT=(\d+)"', example).group(1)
-    assert f":{port}/" in base_url, "models.json은 환경변수를 읽지 않는다 - 포트가 어긋나면 조용히 실패한다"
+    model_id = re.search(r'set "PI_MODEL_ID=([^"]+)"', example).group(1)
+    alias = model_id.split("/", 1)[1]
+
+    body, problems = render_models_json.render(
+        (WIN / "models.json").read_text(encoding="utf-8"), port, alias
+    )
+    assert problems == []
+    document = json.loads(body)
+    assert document["providers"]["local"]["baseUrl"] == f"http://127.0.0.1:{port}/v1"
+    assert [model["id"] for model in document["providers"]["local"]["models"]] == [alias]
+    assert render_models_json.check_model_id(body, model_id) == []
 
 
-def test_pi_model_id_is_the_provider_key_joined_to_the_alias():
-    import json
-    import re
-
-    document = json.loads((WIN / "models.json").read_text(encoding="utf-8"))
-    provider_key = next(iter(document["providers"]))
-    model_id = document["providers"][provider_key]["models"][0]["id"]
-    example = read("config.env.example")
-    configured = re.search(r'set "PI_MODEL_ID=([^"]+)"', example).group(1)
-    assert configured == f"{provider_key}/{model_id}"
-
-
-def test_both_pi_callers_refresh_models_json_from_the_verified_root_copy():
-    # 원본은 매니페스트 해시 범위 안(번들 루트)에 있고, 가변 영역인 home\agent\로
-    # 매번 덮어쓴다. 그래야 설정이 항상 검증된 원본에서 나온다.
+def test_both_pi_callers_render_models_json_from_the_verified_template():
+    # 원본 템플릿은 매니페스트 해시 범위 안(번들 루트)에 있고, 가변 영역인
+    # home\agent\로 매번 렌더링한다. 그래야 설정이 항상 검증된 원본에서 나오고,
+    # 포트/alias는 config.env 하나에서만 온다.
     for name in ("start-pi.bat", "verify-offline.bat"):
         body = read(name)
-        assert 'copy /y "%ROOT%models.json" "%PI_CODING_AGENT_DIR%\\models.json"' in body, name
+        assert "tools\\render_models_json.py" in body, name
+        assert '--template "%ROOT%models.json"' in body, name
+        assert '--out "%PI_CODING_AGENT_DIR%\\models.json"' in body, name
+        assert '--port "%LLAMA_PORT%"' in body, name
+        assert '--alias "%MODEL_ALIAS%"' in body, name
+        assert '--model-id "%PI_MODEL_ID%"' in body, name
+        # 통째 복사는 사라져야 한다 - 남아 있으면 자리표시자가 그대로 나간다.
+        assert 'copy /y "%ROOT%models.json"' not in body, name
         assert 'if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"' in body, name
         assert 'if not exist "%ROOT%models.json"' in body, name
-        # 복사는 서브루틴에 있으므로 실행 순서는 call 위치로 본다.
+        # 렌더링 실패는 조용히 넘어가지 않는다.
+        place = body[body.index("\n:place_models_json\n") :]
+        place = place[: place.index("\nexit /b 0\n") + len("\nexit /b 0\n")]
+        assert "if errorlevel 1 (" in place, name
+        assert "exit /b 1" in place, name
+        # 렌더링은 서브루틴에 있으므로 실행 순서는 call 위치로 본다.
         index_call = body.index("call :place_models_json")
         index_pi = body.index('"%ROOT%bin\\pi\\pi.exe" --offline')
         assert index_call < index_pi, name
@@ -449,11 +471,33 @@ def test_batch_files_prefer_the_bundled_python_runtime():
 
 
 def test_user_supplied_python_cmd_still_wins():
+    # :resolve_python 안에서만 보는 질문이다. 2026-08-19에 :resolve_bootstrap_python이
+    # 생기면서 파일 전체 기준으로는 번들 파이썬이 먼저 나오게 됐는데, 그 부트스트랩은
+    # config.env를 읽기 위한 것이라 PYTHON_CMD를 알 수 없는 것이 정상이다.
     for name in ("start-pi.bat", "verify-bundle.bat", "verify-offline.bat"):
         body = read(name)
-        index_user = body.index("if defined PYTHON_CMD goto :eof")
-        index_bundled = body.index("bin\\python\\python.exe")
+        resolver = body[body.index("\n:resolve_python\n") :]
+        index_user = resolver.index("if defined PYTHON_CMD goto :eof")
+        index_bundled = resolver.index("bin\\python\\python.exe")
         assert index_user < index_bundled, name
+
+
+def test_the_config_bootstrap_python_never_consults_python_cmd():
+    # 순환을 피하는 구조다: PYTHON_CMD는 config.env가 정하는 값이고, config.env를
+    # 읽으려면 이미 파이썬이 있어야 한다. 부트스트랩 해석기가 PYTHON_CMD를 보면
+    # "설정이 자기 자신을 읽는 방법을 정한다"는 순환이 생긴다.
+    for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
+        body = read(name)
+        bootstrap = body[body.index("\n:resolve_bootstrap_python\n") :]
+        bootstrap = bootstrap[: bootstrap.index("\nexit /b 1\n")]
+        executable = "\n".join(
+            line for line in bootstrap.splitlines() if not line.strip().lower().startswith("rem ")
+        )
+        assert "PYTHON_CMD" not in executable, name
+        assert 'if defined BOOTSTRAP_PY goto :eof' in bootstrap, name
+        assert "bin\\python\\python.exe" in bootstrap, name
+        # 부트스트랩은 config를 읽기 전에 끝나야 한다.
+        assert body.index("call :resolve_bootstrap_python") < body.index("call :load_config"), name
 
 
 # --- Minor 3: 모델 적재 타임아웃을 config.env로 뺀다 ---
@@ -472,16 +516,32 @@ def test_config_example_documents_the_new_variables():
         assert variable in example, variable
 
 
-def test_config_env_is_loaded_through_an_executable_copy():
-    # cmd의 call은 .bat/.cmd 확장자만 배치로 실행한다. `call "...\config.env"`는
-    # 아무 일도 하지 않고 errorlevel 0으로 돌아온다(2026-08-18 윈도우 실측:
-    # config.env의 모든 set이 무시되어 MODEL_ALIAS가 끝내 비어 있었다).
+def test_config_env_is_parsed_by_python_never_executed_as_cmd_code():
+    # 2026-08-19 감사 실측: config.env를 .cmd로 복사해 call하면 그 파일은 설정이
+    # 아니라 **코드**가 된다. `&`가 든 값은 뒤가 명령으로 실행되고, %VAR%·!VAR!는
+    # 값에서 소실된다. cmd의 call은 .bat/.cmd 확장자만 배치로 실행하므로
+    # `call "...\config.env"` 자체도 답이 아니다(2026-08-18 실측: 모든 set이
+    # 무시되고 MODEL_ALIAS가 비어 있었다). 그래서 파이썬이 파싱하고, 검증을
+    # 통과한 값만 담은 sanitized 사본을 call한다.
     for name in ("start-llama.bat", "start-pi.bat", "verify-offline.bat", "install-python-packages.bat"):
         body = read(name)
         assert 'call "%ROOT%config.env"' not in body, name
         assert "call :load_config" in body, name
-        assert 'copy /y "%ROOT%config.env" "%ROOT%home\\agent\\config.cmd"' in body, name
+        # 원본을 그대로 실행 가능한 사본으로 복사하는 옛 경로가 남으면 안 된다.
+        assert 'copy /y "%ROOT%config.env"' not in body, name
+        assert "tools\\config_parse.py" in body, name
+        assert '--config "%ROOT%config.env"' in body, name
+        assert '--out "%ROOT%home\\agent\\config.cmd"' in body, name
         assert 'call "%ROOT%home\\agent\\config.cmd"' in body, name
+        # 파싱 실패는 nonzero로 멈춘다 - 거부된 설정으로 계속 가지 않는다.
+        loader = body[body.index("\n:load_config\n") :]
+        loader = loader[: loader.index("\nexit /b 0\n") + len("\nexit /b 0\n")]
+        index_parse = loader.index("config_parse.py")
+        index_call = loader.index('call "%ROOT%home\\agent\\config.cmd"')
+        assert index_parse < index_call, name
+        between = loader[index_parse:index_call]
+        assert "if errorlevel 1 (" in between, name
+        assert "exit /b 1" in between, name
 
 
 def test_config_files_are_stored_in_the_declared_script_encoding():
@@ -961,3 +1021,142 @@ def test_readme_documents_the_isolated_default_and_what_user_scope_costs():
     # --user를 쓸 때 무엇을 감수하는지, 실행 파일이 어디 놓이는지.
     assert "Python312\\Scripts" in readme
     assert "site-packages" in readme
+
+
+# --- 2026-08-19 외부 감사(GPT-5.6 Sol): 실패가 exit 0으로 보고되던 것을 고친다 ---
+# 배치는 리눅스에서 실행할 수 없으므로 여기서는 계약만 지킨다. 판정 로직 자체의
+# 행동은 tests/test_verify_gate.py, test_tool_roundtrip.py가 실제로 돌려서 본다.
+
+
+def _verify_offline_main_flow() -> str:
+    body = read("verify-offline.bat")
+    return body[body.index("echo [1/8]") : body.index("goto :end")]
+
+
+def test_verify_offline_ends_with_a_verdict_that_decides_its_exit_code():
+    body = read("verify-offline.bat")
+    assert "tools\\verify_gate.py" in body
+    index_gate = body.index("tools\\verify_gate.py")
+    index_last_pi = body.rindex("bin\\pi\\pi.exe")
+    assert index_last_pi < index_gate, "판정은 pi.exe 호출을 모두 마친 뒤에 온다"
+    assert 'set "GATE_RC=!errorlevel!"' in body
+    assert "endlocal & exit /b %GATE_RC%" in body
+    # 판정에 넘기는 재료: 각 단계의 종료 코드와 대조 기준.
+    for argument in (
+        "--evidence",
+        '--alias "%MODEL_ALIAS%"',
+        "--probe-word NARWHAL-7Q2X",
+        "--packages-file",
+        "--manifest-rc !MANIFEST_RC!",
+        "--render-rc !RENDER_RC!",
+        "--sync-rc !SYNC_RC!",
+        "--pi-list-rc !PI_LIST_RC!",
+    ):
+        assert argument in body, argument
+
+
+def test_verify_offline_collects_every_step_before_it_judges():
+    # 증거가 목적이므로 중간에 abort하지 않는다. 실패한 단계는 종료 코드를
+    # 기록만 하고, 판정은 마지막에 한 번에 한다.
+    flow = _verify_offline_main_flow()
+    assert "exit /b" not in flow, flow[flow.index("exit /b") - 200 : flow.index("exit /b") + 40] if "exit /b" in flow else ""
+
+
+def test_verify_offline_records_the_exit_code_of_every_step_it_judges():
+    flow = _verify_offline_main_flow()
+    for command, variable in (
+        ("verify_bundle.py", 'set "MANIFEST_RC=!errorlevel!"'),
+        ("call :place_models_json", 'set "RENDER_RC=!errorlevel!"'),
+        ("call :sync_packages", 'set "SYNC_RC=!errorlevel!"'),
+        ('pi.exe" list', 'set "PI_LIST_RC=!errorlevel!"'),
+    ):
+        assert command in flow, command
+        after = flow[flow.index(command) :]
+        # errorlevel은 다음 명령이 덮어쓴다 - 기록은 바로 다음 줄이어야 한다.
+        next_lines = [line.strip() for line in after.splitlines()[1:3]]
+        assert variable in next_lines, f"{command} -> {next_lines}"
+
+
+def test_verify_offline_does_not_trust_pi_exit_code_for_the_round_trip():
+    # pi.exe는 "stopReason: error" 직후에도 0을 반환한 실측이 있다.
+    body = read("verify-offline.bat")
+    assert "--mode json" in body
+    assert "tool_roundtrip" in read("verify-offline.bat") or "verify_gate.py" in body
+    # 왕복 판정에 pi.exe의 종료 코드를 쓰지 않는다는 사실 자체를 고정한다.
+    assert "--roundtrip-rc" not in body
+
+
+def test_install_python_packages_stops_when_the_install_or_the_import_fails():
+    # 감사 실측: FAKE_PIP_FAIL / FAKE_IMPORT_FAIL 둘 다 EXITCODE=0이었다.
+    body = read("install-python-packages.bat")
+    for command, variable, code in (
+        ("-m pip install --no-index", 'set "PIP_RC=%errorlevel%"', "exit /b 5"),
+        ("check_imports.py", 'set "IMPORT_RC=%errorlevel%"', "exit /b 6"),
+    ):
+        assert command in body, command
+        after = body[body.index(command) :]
+        assert variable in after.splitlines()[1], command
+        gate = after[: after.index(code) + len(code)]
+        # 증거 파일은 판정 전에 그대로 출력된다 - 실패해도 증거는 남는다.
+        assert "type " in gate, command
+
+
+def test_start_llama_refuses_the_vulkan_backend_in_code_not_only_in_docs():
+    body = read("start-llama.bat")
+    assert 'if /I "%LLAMA_BACKEND%"=="vulkan" (' in body
+    refusal = body[body.index('if /I "%LLAMA_BACKEND%"=="vulkan" (') :]
+    refusal = refusal[: refusal.index("\n)")]
+    assert "[FAIL]" in refusal
+    assert "19957" in refusal, "상류 이슈 번호가 메시지에 있어야 운영자가 근거를 찾는다"
+    assert "ggml_ssm" in refusal
+    assert "exit /b 8" in refusal
+    # 거부는 백엔드로 경로를 만들기 전에 일어나야 한다.
+    assert body.index('=="vulkan"') < body.index('set "LLAMA_DIR=')
+
+
+def test_start_llama_requires_an_explicit_opt_in_for_the_cpu_backend():
+    body = read("start-llama.bat")
+    assert 'if /I "%LLAMA_BACKEND%"=="cpu" if not "%ALLOW_CPU_DIAGNOSTIC%"=="1" (' in body
+    gate = body[body.index('if not "%ALLOW_CPU_DIAGNOSTIC%"=="1" (') :]
+    gate = gate[: gate.index("\n)")]
+    assert "[FAIL]" in gate
+    assert "exit /b 9" in gate
+    assert "ALLOW_CPU_DIAGNOSTIC=1" in gate
+    # 허용했을 때도 진단용이라고 경고한다.
+    assert "[warn] cpu backend" in body
+    assert body.index('=="cpu"') < body.index('set "LLAMA_DIR=')
+
+
+def test_config_example_documents_the_cpu_opt_in():
+    assert 'set "ALLOW_CPU_DIAGNOSTIC=0"' in read("config.env.example")
+
+
+def test_start_pi_passes_the_pi_exit_code_through_unchanged():
+    body = read("start-pi.bat")
+    launch = '"%ROOT%bin\\pi\\pi.exe" --offline --model "%PI_MODEL_ID%" %*'
+    assert launch in body
+    after = body[body.index(launch) + len(launch) :]
+    assert after.splitlines()[1].strip() == "exit /b %errorlevel%"
+
+
+def test_package_sync_compares_the_whole_tree_not_just_two_anchor_files():
+    # 앵커 두 개만 보면 부분 실패가 통과한다 - xcopy가 개별 파일 실패에도
+    # 종료 코드 0을 내는 실측이 있으므로 특히 그렇다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        sync_body = _sync_packages_subroutine_body(read(name))
+        assert "tools\\package_tree.py" in sync_body, name
+        assert '--pair "%ROOT%pi-packages\\npm::%PI_CODING_AGENT_DIR%\\npm"' in sync_body, name
+        assert '--pair "%ROOT%pi-packages\\git::%PI_CODING_AGENT_DIR%\\git"' in sync_body, name
+        # 불일치는 nonzero로 끝난다.
+        after = sync_body[sync_body.index("package_tree.py") :]
+        assert "if errorlevel 1 (" in after, name
+        assert "exit /b 1" in after, name
+        # 대조는 xcopy가 모두 끝난 뒤에 온다.
+        assert sync_body.rindex("xcopy ") < sync_body.index("package_tree.py"), name
+
+
+def test_start_pi_stops_when_the_package_tree_does_not_match():
+    body = read("start-pi.bat")
+    assert "call :sync_packages" in body
+    after = body[body.index("call :sync_packages") :]
+    assert after.splitlines()[1].strip() == "if errorlevel 1 exit /b 7"
