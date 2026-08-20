@@ -10,6 +10,15 @@
 그래서 `verify-offline.bat`은 증거를 **끝까지 다 모은 뒤** 이 모듈을 부른다.
 중간에 abort하지 않는다 - 증거가 목적이기 때문이다. 판정은 여기서 한 번에
 하고, 하나라도 실패하면 nonzero로 끝난다.
+
+2026-08-20 재리뷰(GPT-5.6 Sol)는 이 원칙 자체가 뒤집혀 적용된 자리를 하나
+찾았다: Pi 툴 왕복 판정은 JSON 이벤트만 보고 `pi.exe`의 종료 코드
+(`--roundtrip-rc`)는 아예 받지도 않았다. "종료 코드만으로 판정하지 않는다"가
+"종료 코드를 무시한다"로 잘못 좁혀진 것이다. JSON 조건을 전부 충족시킨 채
+`pi.exe`만 nonzero로 죽게 만들면 최종 판정이 통과했다(실측: exit 23으로도
+`[PASS] 6개 항목 전부 통과`). 계약은 이제 이렇다 - `성공 = 프로세스 RC 0
+AND JSON 내용 전체 통과`. 아직 "정상 완료 후에도 nonzero를 낸다"는 실측이
+있는 Pi 버전은 없으므로, 예외 코드는 두지 않는다.
 """
 from __future__ import annotations
 
@@ -81,6 +90,7 @@ def evaluate(
     render_rc: int,
     sync_rc: int,
     pi_list_rc: int,
+    roundtrip_rc: int = 0,
 ) -> list[tuple[str, bool, str]]:
     """(항목, 통과 여부, 설명) 목록. 순서가 곧 콘솔 요약의 순서다."""
     results: list[tuple[str, bool, str]] = []
@@ -146,6 +156,10 @@ def evaluate(
         results.append(("Pi 툴 왕복", False, "evidence\\pi-tool-roundtrip.json이 없다"))
     else:
         problems, facts = tool_roundtrip.judge(roundtrip_text, probe_word)
+        # 성공 = 프로세스 RC 0 AND JSON 내용 전체 통과. JSON이 전부 통과해도
+        # pi.exe 자신이 nonzero로 죽었다면 그 사실을 감춰서는 안 된다.
+        if roundtrip_rc != 0:
+            problems = [*problems, f"pi.exe 종료 코드 {roundtrip_rc}"]
         if problems:
             results.append(("Pi 툴 왕복", False, "; ".join(problems)))
         else:
@@ -153,7 +167,8 @@ def evaluate(
                 (
                     "Pi 툴 왕복",
                     True,
-                    "stopReason={stop}, 토큰 {tokens}, 도구 호출/결과 있음, 최종 답변에 {probe}".format(
+                    "stopReason={stop}, 토큰 {tokens}, 도구 호출/결과 있음, 최종 답변에 {probe}, "
+                    "pi.exe 종료 코드 0".format(
                         stop=",".join(facts["stop_reasons"]) or "-",
                         tokens=facts["tokens"],
                         probe=probe_word,
@@ -173,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--render-rc", type=int, default=0)
     parser.add_argument("--sync-rc", type=int, default=0)
     parser.add_argument("--pi-list-rc", type=int, default=0)
+    parser.add_argument("--roundtrip-rc", type=int, default=0)
     arguments = parser.parse_args(argv)
 
     packages: list[str] = []
@@ -192,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         render_rc=arguments.render_rc,
         sync_rc=arguments.sync_rc,
         pi_list_rc=arguments.pi_list_rc,
+        roundtrip_rc=arguments.roundtrip_rc,
     )
 
     print("")

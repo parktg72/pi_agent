@@ -95,16 +95,17 @@ set "PROBE=%EV%\probe.txt"
 "%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --tools read --mode json -p "%PROBE% - read this file with the read tool and answer with exactly the word written in it" > "%EV%\pi-tool-roundtrip.json" 2>&1
 set "ROUNDTRIP_RC=!errorlevel!"
 type "%EV%\pi-tool-roundtrip.json"
-echo [info] pi.exe exit code was !ROUNDTRIP_RC! - it is recorded, not trusted.
-echo        pi.exe has been measured returning 0 right after "stopReason: error".
-echo        Step 8 judges the JSON events instead.
+echo [info] pi.exe exit code was !ROUNDTRIP_RC! - it is now part of the verdict.
+echo        pi.exe has also been measured returning 0 right after "stopReason: error",
+echo        so step 8 still judges the JSON events too - a nonzero exit code fails
+echo        the verdict on its own, and a 0 exit code does not excuse bad JSON either.
 
 echo [7/8] stopping the network capture
 pktmon stop >nul 2>&1
 pktmon etl2txt "%EV%\pktmon.etl" --out "%EV%\pktmon.txt" >nul 2>&1
 
 echo [8/8] verdict
-%PYTHON_CMD% "%ROOT%tools\verify_gate.py" --evidence "%EV%" --alias "%MODEL_ALIAS%" --probe-word NARWHAL-7Q2X --packages-file "%ROOT%pi-packages\settings.packages.json" --manifest-rc !MANIFEST_RC! --render-rc !RENDER_RC! --sync-rc !SYNC_RC! --pi-list-rc !PI_LIST_RC!
+%PYTHON_CMD% "%ROOT%tools\verify_gate.py" --evidence "%EV%" --alias "%MODEL_ALIAS%" --probe-word NARWHAL-7Q2X --packages-file "%ROOT%pi-packages\settings.packages.json" --manifest-rc !MANIFEST_RC! --render-rc !RENDER_RC! --sync-rc !SYNC_RC! --pi-list-rc !PI_LIST_RC! --roundtrip-rc !ROUNDTRIP_RC!
 set "GATE_RC=!errorlevel!"
 
 echo.
