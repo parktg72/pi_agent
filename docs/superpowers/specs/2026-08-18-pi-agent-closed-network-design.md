@@ -1,8 +1,9 @@
 # Pi 코딩 에이전트 폐쇄망 윈도우 배포 설계
 
 작성일: 2026-08-18
-상태: 승인됨 (구현 계획 대기)
+상태: **구현 완료, 현장 리허설 미수행** (2026-08-20 갱신). 스테이징(`H:\model\pi_agent`)과 `.bat`·도구·테스트는 모두 있고 229개 테스트가 통과한다. GPU가 달린 PC에서의 실기 리허설(`docs/superpowers/plans/rehearsal-2026-08-18.md`)은 아직 수행하지 않았다 — 즉 실제 GGUF를 적재한 llama-server와 Pi의 왕복은 이 저장소에서 아직 관측된 적이 없다.
 리뷰: OpenCode / GPT-5.6 Sol (herdr `wF:p2`), 서브에이전트 4종 분산 조사. 전체 판정 `conditional`, 조건은 아래 6개 항목으로 반영 완료.
+재리뷰: 2026-08-19 GPT-5.6 Sol 독립 감사, 판정 **수정 전 NO-GO** — "현재 검증 체계는 실패를 성공으로 승인할 수 있다". 지적 5건(실패의 exit 0 보고, 포트 이중 정의, `config.env`의 CMD 실행, 위험 백엔드가 문서로만 금지, 앵커만 보는 패키지 동기화)은 2026-08-20 `feature/fail-loudly`에서 고쳤다. 인수인계 기록은 `docs/superpowers/plans/handoff-2026-08-20.md`.
 
 ## 1. 목표
 
@@ -258,7 +259,7 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 | 32k F16 캐시 산술 | 전체 어텐션 16개 층만 컨텍스트에 비례하는 KV 캐시를 가진다: `2 × 4(head_count_kv) × 256(key/value_length) × 32768 × 2bytes × 16층 = 2.0 GiB`. 나머지 48개 선형 어텐션층은 SSM/conv 상태만 유지하며 이는 컨텍스트 길이와 무관하게 고정 크기다(오더 추정 수십~1백 MiB대 — 정확한 값은 Task 8 리허설에서 `nvidia-smi` 실측으로 확인). 가중치 15.66 GiB + 캐시 약 2.0~2.1 GiB ≈ **17.8 GiB**, 여기에 비전 프로젝터(아래 행) 약 0.87 GiB를 더하면 **≈ 18.7 GiB**. 연산 버퍼·CUDA graph를 넉넉히 얹어도 33GB(GPU0 디스플레이 점유 차감 후 약 32GB) 안에 여유 있게 들어온다 — 원래 검토했던 MoE 후보(약 20.3 GiB)보다 오히려 여유가 크다 |
 | `mmproj-Qwen3.8-27B-BF16.gguf` | 931,145,856 bytes (0.867 GiB). **반입 확정 (Task 7b, 2026-08-18).** 사용자 지시로 반입하며, 폐쇄망 PC에서 에러 코드를 사진·스크린샷으로 입력하는 것이 실사용 목적이다 — "가능하면 넣는" 부가 기능이 아니라 필요 기능이다. `models\` 바로 아래에 평평하게 둔다(주력 모델과 동일한 규칙, `models\Qwen3.8-27B\` 하위 디렉터리 불필요). 사용자의 LM Studio 로컬 캐시(`C:\Users\ptg\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\mmproj-Qwen3.8-27B-BF16.gguf`)에서 그대로 복사했고, 사본의 SHA256이 원본과 일치함을 확인했다. SHA256: `97ba9d70e7407f08c880def231fd360a312c76d0053387733f10dcf6affd75a1`. 설정은 `config.env`의 `MMPROJ_FILE=mmproj-Qwen3.8-27B-BF16.gguf`(기본값으로 채워 둠) — `start-llama.bat`이 이 값이 있으면 `--mmproj`를 조건부로 붙이고, 비우면 텍스트 전용으로 뜬다 |
 | 백업 모델 | 이번 라운드에 반입하지 않음. 사용자가 이미 확보한 주력 모델을 먼저 검증하는 것이 우선이었고, 백업 필요 여부는 Task 8 리허설 결과를 보고 정한다 |
-| 알려진 위험 — Vulkan 폴백 | `bin\llama-vulkan`(§4의 폴백 백엔드)은 이 아키텍처 계열(qwen3.5/qwen35)의 `ggml_ssm_conv`/`ggml_ssm_scan`을 구현하지 않았고, 조용히 CPU로 폴백하면서 GPU↔CPU 경계에서 상태가 손상된다(상류 이슈 `ggml-org/llama.cpp#19957`, 2026-02-27 open, 미해결 — 손상된 출력 또는 `vk::DeviceLostError`로 이어짐). CUDA 백엔드는 완전히 지원한다(`b10470`, 2026-08-17 릴리스 — qwen35 아키텍처와 MTP는 2026-05부터 지원됨). 즉 현장에서 CUDA가 실패해도 `llama-vulkan`은 이 모델에 안전한 폴백이 아니다 — 대신 `bin\llama-cpu`(느리지만 정확)로 내려가야 한다. README와 Task 8 리허설 항목에 이 제약을 명시할 것 |
+| 알려진 위험 — Vulkan 폴백 | `bin\llama-vulkan`(§4의 폴백 백엔드)은 이 아키텍처 계열(qwen3.5/qwen35)의 `ggml_ssm_conv`/`ggml_ssm_scan`을 구현하지 않았고, 조용히 CPU로 폴백하면서 GPU↔CPU 경계에서 상태가 손상된다(상류 이슈 `ggml-org/llama.cpp#19957`, 2026-02-27 open, 미해결 — 손상된 출력 또는 `vk::DeviceLostError`로 이어짐). CUDA 백엔드는 완전히 지원한다(`b10470`, 2026-08-17 릴리스 — qwen35 아키텍처와 MTP는 2026-05부터 지원됨). 즉 현장에서 CUDA가 실패해도 `llama-vulkan`은 이 모델에 안전한 폴백이 아니다 — 대신 `bin\llama-cpu`(느리지만 정확)로 내려가야 한다. **2026-08-20부터 문서가 아니라 코드가 막는다**: `start-llama.bat`이 `LLAMA_BACKEND=vulkan`을 이슈 번호와 함께 거부하고(exit 8), `cpu`는 `ALLOW_CPU_DIAGNOSTIC=1` 없이는 거부한다(exit 9) |
 | 알려진 위험 — 연산량 | dense 27.8B 전량이 매 토큰 활성화된다(당초 권고안이던 MoE의 활성 3.3B 대비 토큰당 연산량이 훨씬 크다). Pascal(compute 6.1, FP16 텐서코어 없음)에서 체감 속도 저하가 예상된다. 하이브리드 선형 어텐션은 긴 프롬프트의 prefill을 완화할 뿐 디코드 연산량 자체는 줄이지 않는다 — 실측 토큰/초는 Task 8 리허설에서 확인해야 한다 |
 
 `STAGING_MANIFEST.json`에는 스테이징 단계(Task 5)에서 위 파일의 해시가 다시 기록된다.
@@ -313,7 +314,7 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 
 ### 8.2 폐쇄망 도착 후
 
-`verify-offline.bat`이 `evidence\`에 다음을 남긴다. **exit 0이 아니라 남은 증거가 성공 기준이다.**
+`verify-offline.bat`이 `evidence\`에 다음을 남긴다. **exit 0을 성공의 증거로 믿지 않는다** — 성공은 남은 증거가 말하고, 그 증거를 `tools\verify_gate.py`가 판정해 실패면 nonzero로 내보낸다.
 
 - `nvidia-smi` 드라이버 버전과 GPU별 VRAM
 - `/v1/models` 응답 원문
@@ -383,6 +384,8 @@ Qwen3-Coder-30B-A3B-Instruct 기준 산술:
 1. `start-llama.bat` 실행 → 지정한 모델이 GPU에 적재되고 `/v1/models`에 고정 alias가 나타난다.
 2. `start-pi.bat` 실행 → Pi가 그 모델로 대화하고 파일 읽기 툴 왕복이 성립한다.
 3. `verify-offline.bat` 실행 → 위 증거가 `evidence\`에 남고, 외부 연결 시도가 0건으로 기록된다.
+
+증거를 남기는 것과 판정을 내는 것은 다른 일이다. `verify-offline.bat`은 증거를 **끝까지 다 모은 뒤**(중간에 abort하지 않는다 — 증거가 목적이다) `tools\verify_gate.py`로 여섯 항목을 판정하고, 하나라도 실패하면 nonzero로 끝난다. "성공 판정은 종료 코드가 아니라 증거"라는 원칙은 *exit 0을 성공의 증거로 믿지 말라*는 뜻이지 실패를 종료 코드로 알리지 말라는 뜻이 아니었다 — 실패를 nonzero로 내보내는 것은 그 원칙을 강화한다.
 
 ## 13. Pi 확장·스킬 반입
 
