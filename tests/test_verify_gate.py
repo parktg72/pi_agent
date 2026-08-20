@@ -56,6 +56,7 @@ def run(evidence: Path, **overrides) -> list[tuple[str, bool, str]]:
         render_rc=0,
         sync_rc=0,
         pi_list_rc=0,
+        roundtrip_rc=0,
     )
     arguments.update(overrides)
     return verify_gate.evaluate(**arguments)
@@ -136,6 +137,32 @@ def test_a_connection_error_in_the_round_trip_fails(evidence):
 def test_a_missing_round_trip_file_fails(evidence):
     (evidence / "pi-tool-roundtrip.json").unlink()
     assert "Pi 툴 왕복" in failures(run(evidence))
+
+
+def test_a_nonzero_pi_exit_code_fails_even_with_perfect_json(evidence):
+    # 2026-08-20 재리뷰(GPT-5.6 Sol) 실측: JSON 조건을 전부 충족시킨 채
+    # pi.exe만 exit 23으로 죽여도 예전 게이트는 [PASS] 6개 전부 통과였다.
+    # evidence 픽스처의 ROUNDTRIP JSON은 완전히 정상이다 - roundtrip_rc만
+    # 바꿔서 그것만으로 실패해야 한다.
+    assert "Pi 툴 왕복" in failures(run(evidence, roundtrip_rc=23))
+
+
+def test_a_zero_pi_exit_code_with_perfect_json_still_passes(evidence):
+    # 대조군: 프로세스 RC 0이고 JSON도 통과하면 이 항목은 여전히 통과한다.
+    assert "Pi 툴 왕복" not in failures(run(evidence, roundtrip_rc=0))
+
+
+def test_main_wires_roundtrip_rc_from_argv(evidence, tmp_path):
+    packages_file = tmp_path / "settings.packages.json"
+    packages_file.write_text(json.dumps({"packages": PACKAGES}), encoding="utf-8")
+    argv = [
+        "--evidence", str(evidence),
+        "--alias", ALIAS,
+        "--probe-word", PROBE,
+        "--packages-file", str(packages_file),
+        "--roundtrip-rc", "23",
+    ]
+    assert verify_gate.main(argv) == 1
 
 
 def test_package_names_drops_the_source_prefix_and_the_version():

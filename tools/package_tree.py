@@ -10,10 +10,26 @@
 그래서 staged 트리 전체를 대상 트리와 대조한다. 2,191 파일 14MB이므로 해시까지
 계산해도 싸다 - 크기만 비교하면 같은 크기로 잘린 전송을 놓친다.
 
-대상에만 있는 파일은 **경고**로 남긴다. `xcopy /D`는 상류에서 삭제된 파일을
-지우지 않고, `home\\agent\\`는 매니페스트 밖 가변 영역이라 Pi 자신이 무언가를
-쓸 수도 있다. 빠진 파일과 내용이 다른 파일만 실패로 다룬다 - 그것이 "실어 온
-것이 그대로 놓였는가"라는 질문의 답이다.
+2026-08-20 재리뷰(GPT-5.6 Sol)에서 이 대상-only 경고 처리 자체가 NOT ADDRESSED로
+남았다: `xcopy /D`는 상류에서 삭제된 파일을 지우지 않으므로, 번들을 갱신해
+패키지 하나를 뺐는데도 구버전 잔여 파일이 대상에 남으면 이 검사는 그것을 그냥
+통과시킨다 - "실어 온 것이 그대로 놓였는가"의 반대 방향은 아무도 보지 않았다.
+
+"Pi 자신이 이 트리 밑에 쓸 수도 있다"는 가설은 실측으로 반증됐다(2026-08-20,
+WSL cmd.exe): 빈 npm\\, git\\ 아래에서 `pi.exe list`를 실행하고, 실제
+반입본을 그대로 복사한 npm\\, git\\ 트리를 대상으로 `pi.exe list`와 오프라인
+tool-roundtrip 시도(`--tools read --mode json -p ...`)까지 실행했다. 두
+경우 모두 실행 전후 트리가 바이트 단위로 동일했다(`package_tree.py` 자체로
+재대조, 전량 일치). Pi가 실제로 새로 쓰는 파일은 `auth.json`,
+`models-store.json`이며 - 이번 실측에서도 `settings.json`과 함께 - 셋 다
+`PI_CODING_AGENT_DIR` **바로 밑**에만 생겼고, 이 모듈이 대조하는 `npm\\`,
+`git\\` 서브트리 안에는 하나도 생기지 않았다. 그 세 파일은 애초에 이 모듈의
+`--pair` 인자 범위 밖이다(호출부는 `npm::...`, `git::...` 쌍만 넘긴다).
+
+그래서 대상에만 있는 파일도 이제 **실패**로 다룬다 - 빠진 파일·내용이 다른
+파일과 같은 자격이다. 폐쇄망 고정 번들이 대상인 만큼 좁은 예외보다 엄격한
+양방향 일치가 맞다. 새 패키지 버전으로 갱신하면서 옛 파일이 지워지지 않은
+채 반입되는 사고를 이 검사가 막는다.
 """
 from __future__ import annotations
 
@@ -44,7 +60,10 @@ def compare_trees(source: Path, destination: Path) -> tuple[list[str], list[str]
     placed = _relative_files(destination)
 
     failures = [f"놓이지 않음: {relative}" for relative in sorted(set(staged) - set(placed))]
-    warnings = [f"대상에만 있음: {relative}" for relative in sorted(set(placed) - set(staged))]
+    # 2026-08-20까지는 이것이 warnings였다 - "Pi 자신이 여기 쓸 수도 있다"는
+    # 가설 때문이었다. 실측(위 docstring)으로 반증됐으므로 이제 failures다.
+    failures += [f"대상에만 있음: {relative}" for relative in sorted(set(placed) - set(staged))]
+    warnings: list[str] = []
 
     for relative in sorted(set(staged) & set(placed)):
         left, right = staged[relative], placed[relative]

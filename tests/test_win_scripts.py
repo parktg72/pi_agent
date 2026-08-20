@@ -1051,6 +1051,7 @@ def test_verify_offline_ends_with_a_verdict_that_decides_its_exit_code():
         "--render-rc !RENDER_RC!",
         "--sync-rc !SYNC_RC!",
         "--pi-list-rc !PI_LIST_RC!",
+        "--roundtrip-rc !ROUNDTRIP_RC!",
     ):
         assert argument in body, argument
 
@@ -1077,13 +1078,28 @@ def test_verify_offline_records_the_exit_code_of_every_step_it_judges():
         assert variable in next_lines, f"{command} -> {next_lines}"
 
 
-def test_verify_offline_does_not_trust_pi_exit_code_for_the_round_trip():
-    # pi.exe는 "stopReason: error" 직후에도 0을 반환한 실측이 있다.
+def test_verify_offline_judges_json_events_not_just_pi_exit_code():
+    # pi.exe는 "stopReason: error" 직후에도 0을 반환한 실측이 있다 - JSON도
+    # 봐야 한다는 근거다. 하지만 이것이 "종료 코드를 무시한다"는 뜻은 아니다:
+    # 2026-08-20 재리뷰(GPT-5.6 Sol)가 JSON은 전부 통과시키면서 pi.exe만
+    # nonzero로 죽는 경우를 실측해 통과시켰던 것을 찾았다.
     body = read("verify-offline.bat")
     assert "--mode json" in body
     assert "tool_roundtrip" in read("verify-offline.bat") or "verify_gate.py" in body
-    # 왕복 판정에 pi.exe의 종료 코드를 쓰지 않는다는 사실 자체를 고정한다.
-    assert "--roundtrip-rc" not in body
+
+
+def test_verify_offline_also_passes_the_pi_exit_code_to_the_gate():
+    # 성공 = 프로세스 RC 0 AND JSON 내용 전체 통과. 종료 코드가 gate로 실제로
+    # 전달되는지, 그리고 기록된 값(ROUNDTRIP_RC)이 실제로 넘어가는지 고정한다.
+    body = read("verify-offline.bat")
+    assert 'set "ROUNDTRIP_RC=!errorlevel!"' in body
+    index_capture = body.index('set "ROUNDTRIP_RC=!errorlevel!"')
+    after_capture = body[index_capture:]
+    # 캡처와 gate 호출 사이에 pi.exe를 다시 부르지 않는다 - 그러면 errorlevel이
+    # 다른 값으로 덮인 뒤의 ROUNDTRIP_RC를 넘기는 셈이 된다.
+    assert "bin\\pi\\pi.exe" not in after_capture[len('set "ROUNDTRIP_RC=!errorlevel!"') :]
+    assert "tools\\verify_gate.py" in after_capture
+    assert "--roundtrip-rc !ROUNDTRIP_RC!" in after_capture
 
 
 def test_install_python_packages_stops_when_the_install_or_the_import_fails():
