@@ -19,6 +19,12 @@
 `[PASS] 6개 항목 전부 통과`). 계약은 이제 이렇다 - `성공 = 프로세스 RC 0
 AND JSON 내용 전체 통과`. 아직 "정상 완료 후에도 nonzero를 낸다"는 실측이
 있는 Pi 버전은 없으므로, 예외 코드는 두지 않는다.
+
+2026-08-21: 다섯 개의 종료 코드 인자(`--manifest-rc`, `--render-rc`,
+`--sync-rc`, `--pi-list-rc`, `--roundtrip-rc`)를 모두 필수로 만들었다. 기본값 0은
+bat 호출부가 인자를 빠뜨렸을 때 조용히 성공으로 판정하는 버그를 만든다. 호출부
+verify-offline.bat이 반드시 다섯 인자를 모두 넘기므로, argparse가 빠진 것을
+명확히 실패로 보호해야 한다.
 """
 from __future__ import annotations
 
@@ -90,7 +96,7 @@ def evaluate(
     render_rc: int,
     sync_rc: int,
     pi_list_rc: int,
-    roundtrip_rc: int = 0,
+    roundtrip_rc: int,
 ) -> list[tuple[str, bool, str]]:
     """(항목, 통과 여부, 설명) 목록. 순서가 곧 콘솔 요약의 순서다."""
     results: list[tuple[str, bool, str]] = []
@@ -184,11 +190,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--alias", required=True)
     parser.add_argument("--probe-word", required=True)
     parser.add_argument("--packages-file", type=Path, default=None)
-    parser.add_argument("--manifest-rc", type=int, default=0)
-    parser.add_argument("--render-rc", type=int, default=0)
-    parser.add_argument("--sync-rc", type=int, default=0)
-    parser.add_argument("--pi-list-rc", type=int, default=0)
-    parser.add_argument("--roundtrip-rc", type=int, default=0)
+    parser.add_argument("--manifest-rc", type=int, required=True)
+    parser.add_argument("--render-rc", type=int, required=True)
+    parser.add_argument("--sync-rc", type=int, required=True)
+    parser.add_argument("--pi-list-rc", type=int, required=True)
+    parser.add_argument("--roundtrip-rc", type=int, required=True)
     arguments = parser.parse_args(argv)
 
     packages: list[str] = []
