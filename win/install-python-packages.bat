@@ -1,9 +1,17 @@
 @echo off
 chcp 65001 >nul
 setlocal
+rem The console is UTF-8, so Python output is pinned to UTF-8 too - and it is
+rem pinned here, ahead of every Python call. config.env is parsed by Python
+rem now, so the first Python call happens earlier than it used to.
+rem PYTHONIOENCODING only covers stdio; PYTHONUTF8 covers the tools' file I/O.
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
 set "ROOT=%~dp0"
 rem All relative paths must resolve against the bundle root, not the caller's cwd.
 cd /d "%ROOT%"
+call :resolve_bootstrap_python
+if errorlevel 1 exit /b 4
 call :load_config
 if errorlevel 1 exit /b 6
 
@@ -27,10 +35,6 @@ if not exist "%REQUIREMENTS%" (
   echo [FAIL] %REQUIREMENTS% not found
   exit /b 2
 )
-
-rem The console is now UTF-8, so pin Python output to UTF-8 too. The Python
-rem resolution step below already runs Python, so this must be set first.
-set "PYTHONIOENCODING=utf-8"
 
 call :resolve_python
 if errorlevel 1 exit /b 4
@@ -85,36 +89,81 @@ echo [2/4] installing from the offline index only - nothing reaches the network
 echo       find-links: %PKG_DIR%
 echo       constraint: %CONSTRAINT%
 %PYTHON_CMD% -m pip install --no-index --find-links "%PKG_DIR%" --constraint "%CONSTRAINT%" -r "%REQUIREMENTS%" %INSTALL_SCOPE% --no-warn-script-location > "%EV%\python-packages-install.txt" 2>&1
+set "PIP_RC=%errorlevel%"
 type "%EV%\python-packages-install.txt"
+rem A failing install used to end here with exit 0. "Judge by evidence, not by
+rem exit code" meant do not trust exit 0 as proof of success - it never meant
+rem hide a failure from the exit code. The 2026-08-19 audit injected a failing
+rem install and a failing import and got EXITCODE=0 for both.
+if not "%PIP_RC%"=="0" (
+  echo [FAIL] the offline install step failed with exit code %PIP_RC%
+  echo        See evidence\python-packages-install.txt. Nothing was verified after
+  echo        this point, so the packages are not usable.
+  exit /b 5
+)
 
 echo [3/4] placing the VC runtime lightgbm needs
 call :place_vcruntime
 
 echo [4/4] verifying the install - importing every direct dependency in requirements.txt one by one
 %PYTHON_CMD% "%ROOT%tools\check_imports.py" --requirements "%REQUIREMENTS%" > "%EV%\python-packages-check.txt" 2>&1
+set "IMPORT_RC=%errorlevel%"
 type "%EV%\python-packages-check.txt"
+if not "%IMPORT_RC%"=="0" (
+  echo [FAIL] at least one direct dependency failed to import - exit code %IMPORT_RC%
+  echo        See evidence\python-packages-check.txt for the FAIL lines. The known
+  echo        case is lightgbm missing VCOMP140.DLL - check step 3/4 above.
+  exit /b 6
+)
 
 echo.
-echo Evidence is in %EV%. The judging basis is the content of the two files below, not the exit code.
-echo   whether the last line of evidence\python-packages-install.txt ends with "Successfully installed"
-echo   whether the last line of evidence\python-packages-check.txt is IMPORT_OK with no FAIL lines
+echo [ok] the offline install and the import check both passed.
+echo Evidence is in %EV% - the exit code above is backed by these two files:
+echo   the last line of evidence\python-packages-install.txt ends with "Successfully installed"
+echo   the last line of evidence\python-packages-check.txt is IMPORT_OK with no FAIL lines
 goto :end
 
 :load_config
-rem cmd's call only treats .bat/.cmd extensions as batch. Calling .env as-is
-rem does nothing and returns errorlevel 0 - 2026-08-18 measurement on another
-rem script: every set in config.env was ignored and the value stayed empty.
-rem So a runnable .cmd copy is made and that is called instead. The copy is
-rem remade from the source every time.
-if not exist "%ROOT%config.env" goto :eof
+rem config.env used to be copied to home\agent\config.cmd and called. That made
+rem the config file *code*: 2026-08-19 measurement showed a value containing &
+rem runs the rest as a command, and percent-VAR-percent / !VAR! vanish from
+rem values. Python parses it now against an allowed-key list and a value
+rem character set, and writes a sanitized .cmd holding nothing but verified set
+rem statements. That sanitized file is what gets called.
+if not exist "%ROOT%config.env" exit /b 0
 if not exist "%ROOT%home\agent" mkdir "%ROOT%home\agent"
-copy /y "%ROOT%config.env" "%ROOT%home\agent\config.cmd" >nul
+%BOOTSTRAP_PY% "%ROOT%tools\config_parse.py" --config "%ROOT%config.env" --out "%ROOT%home\agent\config.cmd"
 if errorlevel 1 (
-  echo [FAIL] could not copy config.env to a runnable copy
+  echo [FAIL] config.env was refused - fix the lines listed above
   exit /b 1
 )
 call "%ROOT%home\agent\config.cmd"
+exit /b 0
+
+:resolve_bootstrap_python
+rem Reading config.env now needs a Python before the config is read, so this
+rem resolver cannot consult PYTHON_CMD - that value lives in the config. It is
+rem also deliberately separate from :resolve_python below, which demands a
+rem system Python 3.12 with pip. Parsing a config file needs neither, and the
+rem bundled embedded distribution can always do it.
+if defined BOOTSTRAP_PY goto :eof
+if not exist "%ROOT%bin\python\python.exe" goto :resolve_bootstrap_system
+set "BOOTSTRAP_PY="%ROOT%bin\python\python.exe""
 goto :eof
+:resolve_bootstrap_system
+py -3.12 -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "BOOTSTRAP_PY=py -3.12"
+  goto :eof
+)
+python -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "BOOTSTRAP_PY=python"
+  goto :eof
+)
+echo [FAIL] no Python found - config.env cannot be parsed without one.
+echo        Restore the bundled bin\python\python.exe, or install Python 3.12.
+exit /b 1
 
 :place_vcruntime
 rem The lightgbm wheel does not vendor VCOMP140.DLL and MSVCP140.dll that
