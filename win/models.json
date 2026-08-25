@@ -15,6 +15,23 @@
           "input": ["text", "image"],
           "contextWindow": 32768,
           "maxTokens": 32768,
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "off",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "xhigh",
+            "xhigh": null,
+            "max": null
+          },
+          "compat": {
+            "thinkingFormat": "chat-template",
+            "chatTemplateKwargs": {
+              "enable_thinking": { "$$var": "thinking.enabled" },
+              "reasoning_effort": { "$$var": "thinking.effort", "omitWhenOff": true }
+            }
+          },
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         }
       ]

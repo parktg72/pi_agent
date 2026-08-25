@@ -92,7 +92,10 @@ rem file that does not exist would drop the tool round-trip evidence
 rem entirely. The prompt passes an absolute path.
 set "PROBE=%EV%\probe.txt"
 > "%PROBE%" echo NARWHAL-7Q2X
-"%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --tools read --mode json -p "%PROBE% - read this file with the read tool and answer with exactly the word written in it" > "%EV%\pi-tool-roundtrip.json" 2>&1
+rem Same thinking level the operator actually runs with (see start-pi.bat).
+rem A round trip proved at a level nobody uses is evidence about nothing.
+if not defined PI_THINKING set "PI_THINKING=medium"
+"%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" --tools read --mode json -p "%PROBE% - read this file with the read tool and answer with exactly the word written in it" > "%EV%\pi-tool-roundtrip.json" 2>&1
 set "ROUNDTRIP_RC=!errorlevel!"
 type "%EV%\pi-tool-roundtrip.json"
 echo [info] pi.exe exit code was !ROUNDTRIP_RC! - it is now part of the verdict.

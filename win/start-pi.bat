@@ -65,7 +65,17 @@ rem the model answered - pi.exe has been measured returning 0 after printing
 rem "stopReason: error / Connection error." - which is why verify-offline.bat
 rem judges the JSON events instead. But a nonzero code from pi.exe must not be
 rem swallowed either, so it is propagated as-is.
-"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" %*
+rem The Qwen3.8 chat template inside the GGUF defaults reasoning_effort to xhigh
+rem when a request carries none (measured 2026-08-25 by reading
+rem tokenizer.chat_template), and thinking tokens spend the same output budget as
+rem the answer. Inside -c 32768 that default is what cuts long turns short:
+rem the server reports finish_reason "length" and Pi prints "Response was
+rem truncated before completion." and ends the turn. models.json maps Pi's
+rem thinking levels onto the template's chat_template_kwargs; this passes the
+rem configured level. A config.env written before this key existed leaves
+rem PI_THINKING unset, so the bundle default is applied here, not in that file.
+if not defined PI_THINKING set "PI_THINKING=medium"
+"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %*
 exit /b %errorlevel%
 
 :place_models_json

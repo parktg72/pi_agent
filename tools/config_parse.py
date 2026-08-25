@@ -41,6 +41,10 @@ _SET_QUOTED = re.compile(r'^set\s+"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>.*)
 _SET_BARE = re.compile(r'^set\s+(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>.*)$')
 
 BACKENDS = ("cuda", "vulkan", "cpu")
+# models.json의 thinkingLevelMap이 null이 아닌 값을 준 단계만 받는다. Pi는
+# 지원하지 않는 단계를 조용히 가까운 단계로 당겨 쓰므로(clampThinkingLevel),
+# 여기서 걸러야 운영자가 적은 값과 실제로 도는 값이 어긋나지 않는다.
+THINKING_LEVELS = ("off", "low", "medium", "high")
 
 
 def _check_port(value: str) -> str | None:
@@ -87,6 +91,12 @@ def _check_filename(value: str) -> str | None:
     return None
 
 
+def _check_thinking(value: str) -> str | None:
+    if value.lower() not in THINKING_LEVELS:
+        return f"{' | '.join(THINKING_LEVELS)} 중 하나여야 한다"
+    return None
+
+
 def _check_tensor_split(value: str) -> str | None:
     if not re.fullmatch(r"[0-9]+(\.[0-9]+)?(,[0-9]+(\.[0-9]+)?)*", value):
         return "쉼표로 구분한 숫자여야 한다(예: 1,1.2,1.2)"
@@ -106,6 +116,11 @@ ALLOWED_KEYS: dict[str, object] = {
     "MMPROJ_FILE": _check_filename,
     "PI_MODEL_ID": _check_model_id,
     "PI_PROVIDER": None,
+    # Qwen3.8의 채팅 템플릿은 reasoning_effort를 안 주면 xhigh로 사고한다
+    # (GGUF의 tokenizer.chat_template 실측: reasoning_effort|default('xhigh')).
+    # 32768 창에서 그 기본값은 답이 잘리는 쪽으로 기운다. start-pi.bat이
+    # 이 값을 --thinking으로 넘기고, 비어 있으면 medium을 쓴다.
+    "PI_THINKING": _check_thinking,
     "MODEL_LOAD_TIMEOUT": _check_positive_int,
     "PYTHON_CMD": None,
     # 16.8GB 모델을 CPU로 올리는 것은 사고로 선택될 일이 아니다. 진단 목적일
