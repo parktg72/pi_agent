@@ -52,7 +52,10 @@ EXCLUDED_FILES = (
     ".gitattributes",
     "config.env",
     # 오케스트레이션 구성의 루트 파일 — 위 EXCLUDED_ROOTS와 같은 이유.
-    # 번들 자신의 문서는 README-폐쇄망.md 하나뿐이라 이름이 겹치지 않는다.
+    # 이 목록은 번들 루트에만 적용된다(iter_immutable_files의 at_top 조건).
+    # payload 하위에는 README.md·LICENSE·CLAUDE.md 등 동명 파일이 실제로
+    # 존재하므로, at_top 없이 이름만으로 제외하면 그것들이 아무 신호 없이
+    # 해시 범위 밖으로 나간다. 그 계약은 tests/test_manifest.py가 고정한다.
     "CLAUDE.md",
     "AGENTS.md",
     "README.md",
@@ -61,6 +64,9 @@ EXCLUDED_FILES = (
     "CHANGELOG.md",
     "KNOWN_ISSUES.md",
     "SESSION.template.md",
+    # 세션 이어가기 규율이 대상 PC에서 만들고 계속 갱신하는 가변·사적 상태다.
+    # config.env와 같은 이유로, 해시하면 규율을 따른 운영자에게 확정 실패가 뜬다.
+    "SESSION.md",
     ".mcp.json",
 )
 # 파이썬 바이트코드는 대상 PC에서 verify_bundle.py가 import되는 순간 다시

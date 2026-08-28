@@ -190,3 +190,101 @@ def test_manifest_scope_holds_the_payload_in_and_the_mutable_areas_out(tmp_path)
 
     for outside_root in (".venv/", "home/", "evidence/"):
         assert not any(rel.startswith(outside_root) for rel in listed), outside_root
+
+
+def test_excluded_files_apply_to_the_bundle_root_only(tmp_path):
+    # EXCLUDED_FILES는 basename 비교라, iter_immutable_files의 at_top 조건이
+    # 유일한 방어선이다. 그 조건을 지우면 payload 하위의 동명 파일 — 실측 기준
+    # README.md 17개, LICENSE 6개, 벤더 CLAUDE.md 등 — 이 아무 신호 없이 해시
+    # 범위 밖으로 나가고, 그것들이 손상돼도 verify()가 침묵한다.
+    root = make_bundle(tmp_path)
+    for name in manifest.EXCLUDED_FILES:
+        (root / name).write_text("루트의 개발용 파일", encoding="utf-8")
+    vendor = root / "pi-packages" / "git" / "vendor"
+    vendor.mkdir(parents=True)
+    for name in manifest.EXCLUDED_FILES:
+        # 변조 검출이 크기가 아니라 해시로 잡히도록 길이가 같은 내용을 쓴다.
+        (vendor / name).write_text("payload-copy", encoding="utf-8")
+
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    listed = {entry["relative"] for entry in doc["files"]}
+
+    for name in manifest.EXCLUDED_FILES:
+        assert name not in listed, f"루트 {name}은 해시 범위 밖이어야 한다"
+        rel = f"pi-packages/git/vendor/{name}"
+        assert rel in listed, f"{rel}은 payload라 해시 범위 안이어야 한다"
+
+    (vendor / "README.md").write_text("payload-COPY", encoding="utf-8")
+    assert any(
+        "hash mismatch: pi-packages/git/vendor/README.md" == problem
+        for problem in manifest.verify(root, doc)
+    ), "payload 하위 동명 파일의 변조는 검출돼야 한다"
+
+
+def test_excluded_roots_apply_to_the_bundle_root_only(tmp_path):
+    # EXCLUDED_ROOTS도 같은 계약이다. at_top을 지우면 payload 하위의 docs·tests·
+    # assets·중첩 .git이 통째로 빠진다(실측 186개). bin/pi/docs/는 반입 대상이다.
+    root = make_bundle(tmp_path)
+    for name in ("docs", "tests", "assets", "prep", "_shared"):
+        (root / name).mkdir()
+        (root / name / "note.md").write_text("개발 트리 전용", encoding="utf-8")
+        nested = root / "bin" / "pi" / name
+        nested.mkdir(parents=True)
+        (nested / "note.md").write_text("payload", encoding="utf-8")
+
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    listed = {entry["relative"] for entry in doc["files"]}
+
+    for name in ("docs", "tests", "assets", "prep", "_shared"):
+        assert f"{name}/note.md" not in listed, f"루트 {name}/은 해시 범위 밖이어야 한다"
+        assert f"bin/pi/{name}/note.md" in listed, f"bin/pi/{name}/은 해시 범위 안이어야 한다"
+
+
+def test_session_md_written_by_the_handoff_rule_never_breaks_verification(tmp_path):
+    # CLAUDE.md의 세션 이어가기 규율은 SESSION.md가 없으면 만들고 마감 때마다
+    # 갱신하라고 지시한다. 해시 범위에 넣으면 지시를 따른 운영자에게
+    # unexpected: SESSION.md가 뜬다 — config.env와 같은 실패 모드다.
+    root = make_bundle(tmp_path)
+    (root / "SESSION.template.md").write_text("# 세션 양식\n", encoding="utf-8")
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    assert "SESSION.template.md" not in {entry["relative"] for entry in doc["files"]}
+
+    (root / "SESSION.md").write_text("## 현재 상태\n첫 마감\n", encoding="utf-8")
+    assert manifest.verify(root, doc) == [], "세션 체크포인트 생성은 조용해야 한다"
+
+    (root / "SESSION.md").write_text("## 현재 상태\n두 번째 마감\n", encoding="utf-8")
+    assert manifest.verify(root, doc) == [], "세션 체크포인트 갱신도 조용해야 한다"
+
+
+def test_orchestration_scaffold_stays_out_of_the_staging_scope(tmp_path):
+    # 오케스트레이션 구성은 개발 트리 전용이다. 하나라도 범위에 남으면 대상
+    # PC의 verify-bundle이 unexpected:를 내고, README가 단언하는 "지적된 것은
+    # 진짜 전송 손상"이 거짓이 된다.
+    root = make_bundle(tmp_path)
+    scaffold = {
+        "_shared/routing.md",
+        "_templates/task.md",
+        "_local/.gitkeep",
+        "prep/goal-prompt.template.md",
+        "tasks/.gitkeep",
+        "assets/brand/banner.png",
+        ".claude/agents/claude-main.md",
+        "CLAUDE.md",
+        "AGENTS.md",
+        "README.md",
+        "LICENSE",
+        "NOTICE",
+        "CHANGELOG.md",
+        "KNOWN_ISSUES.md",
+        "SESSION.template.md",
+        ".mcp.json",
+    }
+    for rel in scaffold:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("스캐폴드", encoding="utf-8")
+
+    doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
+    listed = {entry["relative"] for entry in doc["files"]}
+    assert listed & scaffold == set(), sorted(listed & scaffold)
+    assert "bin/pi/pi.exe" in listed, "payload는 그대로 범위 안이어야 한다"
