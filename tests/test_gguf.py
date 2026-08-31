@@ -74,3 +74,21 @@ def test_rejects_a_file_that_is_not_gguf(tmp_path):
         assert "GGUF" in str(error)
     else:
         raise AssertionError("GGUF가 아닌 파일을 받아들였다")
+
+
+def test_the_bundled_qwen_template_defaults_to_xhigh_and_takes_three_efforts():
+    # models.json의 thinkingLevelMap이 어떤 값을 보내도 되는지는 이 파일이
+    # 정한다. 모델이 없는 곳에서는 건너뛰고, 있는 곳에서는 하드코딩한 집합이
+    # 여전히 맞는지 실물로 확인한다.
+    import pytest
+
+    model = Path(__file__).resolve().parents[1] / "models" / "Qwen3.8-27B-Q4_K_M.gguf"
+    if not model.is_file():
+        pytest.skip("모델 파일이 없는 환경 - 반입 번들에서만 도는 검사")
+    template = gguf.read_metadata(model, ("tokenizer.chat_template",)).get(
+        "tokenizer.chat_template", ""
+    )
+    assert "reasoning_effort|default('xhigh')" in template
+    assert "not in ('xhigh', 'medium', 'low')" in template
+    # enable_thinking is false일 때 <think>를 즉시 닫는 분기가 있어야 off가 산다.
+    assert "enable_thinking is defined and enable_thinking is false" in template

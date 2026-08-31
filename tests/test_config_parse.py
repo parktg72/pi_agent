@@ -145,3 +145,13 @@ def test_every_key_the_batch_files_read_is_allowed():
     values, problems = config_parse.parse_text(example)
     assert problems == []
     assert "LLAMA_BACKEND" in values and "ALLOW_CPU_DIAGNOSTIC" in values
+
+
+def test_pi_thinking_takes_only_the_levels_the_model_map_offers():
+    values, problems = config_parse.parse_text('set "PI_THINKING=medium"')
+    assert problems == []
+    assert values["PI_THINKING"] == "medium"
+    # xhigh는 models.json에서 null로 막아 둔 단계다. Pi는 지원하지 않는 단계를
+    # 조용히 당겨 쓰므로, 적은 값과 도는 값이 어긋나기 전에 여기서 멈춘다.
+    _, problems = config_parse.parse_text('set "PI_THINKING=xhigh"')
+    assert any("PI_THINKING" in problem for problem in problems)

@@ -105,3 +105,59 @@ def test_main_refuses_a_missing_template(tmp_path):
         )
         == 1
     )
+
+
+# Qwen3.8의 채팅 템플릿이 받는 사고 강도. 템플릿은 이 셋 밖의 값을 만나면
+# raise_exception('Unexpected reasoning effort ...')로 생성을 거절한다.
+# "off"는 서버로 나가지 않는다 - omitWhenOff가 그 자리를 지운다.
+QWEN_REASONING_EFFORTS = {"xhigh", "medium", "low"}
+
+
+def test_the_local_model_is_declared_as_a_reasoning_model():
+    # reasoning이 없으면 Pi는 이 모델을 비추론 모델로 보고 사고 단계 선택지를
+    # 아예 만들지 않는다(getSupportedThinkingLevels는 ["off"]만 돌려준다).
+    # 그러면 템플릿 기본값 xhigh를 낮출 방법이 사라진다.
+    body, problems = render_models_json.render(TEMPLATE, "8080", "qwen3.8-27b")
+    assert problems == []
+    model = json.loads(body)["providers"]["local"]["models"][0]
+    assert model["reasoning"] is True
+
+
+def test_thinking_kwargs_survive_rendering_as_a_single_dollar_var():
+    # 템플릿은 string.Template로 렌더링된다. $var를 그대로 쓰면 자리표시자로
+    # 해석돼 렌더링이 실패한다. 원본은 $$var로 적고 결과가 $var여야 한다.
+    assert '"$$var"' in TEMPLATE
+    body, problems = render_models_json.render(TEMPLATE, "8080", "qwen3.8-27b")
+    assert problems == []
+    kwargs = json.loads(body)["providers"]["local"]["models"][0]["compat"]["chatTemplateKwargs"]
+    assert kwargs["enable_thinking"] == {"$var": "thinking.enabled"}
+    assert kwargs["reasoning_effort"] == {"$var": "thinking.effort", "omitWhenOff": True}
+
+
+def test_the_thinking_map_only_emits_values_the_qwen_template_accepts():
+    body, problems = render_models_json.render(TEMPLATE, "8080", "qwen3.8-27b")
+    assert problems == []
+    model = json.loads(body)["providers"]["local"]["models"][0]
+    mapped = model["thinkingLevelMap"]
+    for level, value in mapped.items():
+        if value is None or level == "off":
+            continue
+        assert value in QWEN_REASONING_EFFORTS, f"{level} -> {value}"
+    # 사고를 끄는 길은 남아 있어야 한다. off가 null이면 목록에서 사라진다.
+    assert mapped["off"] is not None
+    # 그리고 config.env가 허용하는 단계는 전부 실제로 매핑돼 있어야 한다.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import config_parse
+
+    for level in config_parse.THINKING_LEVELS:
+        assert mapped.get(level) is not None, level
+
+
+def test_the_chat_template_path_is_the_one_pi_uses_for_kwargs():
+    # thinkingFormat이 "qwen-chat-template"이면 Pi는 enable_thinking만 보내고
+    # chatTemplateKwargs를 무시한다(openai-completions.js:619). 그러면
+    # reasoning_effort가 전달되지 않아 템플릿 기본값 xhigh로 되돌아간다.
+    body, problems = render_models_json.render(TEMPLATE, "8080", "qwen3.8-27b")
+    assert problems == []
+    compat = json.loads(body)["providers"]["local"]["models"][0]["compat"]
+    assert compat["thinkingFormat"] == "chat-template"

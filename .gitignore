@@ -44,3 +44,19 @@ STAGING_MANIFEST.json
 # 파이썬 바이트코드
 __pycache__/
 *.pyc
+
+# --- multiagent starter ---
+# 작업 데이터 — 사용자 사적 자료, git 추적 안 함 (폴더 구조 유지를 위해 .gitkeep만 추적)
+tasks/*
+!tasks/.gitkeep
+
+# 프로젝트 특화 교훈 — 작성자 사적 누적물, git 추적 안 함 (폴더만 유지)
+_local/*
+!_local/.gitkeep
+
+# 세션 체크포인트 — 세션별 가변·사적 상태. 최상위만(하위 payload의 동명
+# 파일까지 숨기지 않도록 슬래시를 붙인다)
+/SESSION.md
+
+# graphify 지식그래프 산출물 — 생성물이라 매니페스트 해시 범위에서도 빠진다
+/graphify-out/

@@ -27,14 +27,48 @@ EXCLUDED_ROOTS = (
     ".cache",
     ".pytest_cache",
     ".superpowers",
+    # graphify 지식그래프 산출물. 소스가 아니라 생성물이라 스테이징 범위 밖이다.
+    "graphify-out",
     # install-python-packages.bat이 기본값으로 만드는 가상환경. 대상 PC에서
     # 생기므로 스테이징 시점에는 없고, 만들어지는 순간 수천 개 파일이
     # unexpected:로 쏟아져 무결성 검사가 영구히 빨간불이 된다.
     ".venv",
+    # 오케스트레이션 구성(멀티에이전트 스캐폴드) — 개발 트리 전용이다. 반입
+    # 번들에 실리면 verify-bundle이 unexpected:로 쏟아내고, README가 단언하는
+    # "지적된 것은 진짜 전송 손상"이 거짓이 된다.
+    "_shared",
+    "_templates",
+    "_local",
+    "prep",
+    "tasks",
+    "assets",
+    ".claude",
 )
 # config.env는 README와 리허설 절차서가 현장에서 채우라고 지시하는 파일이다.
 # 해시하면 지시를 따른 운영자에게 hash mismatch가 확정적으로 뜬다.
-EXCLUDED_FILES = ("STAGING_MANIFEST.json", ".gitignore", ".gitattributes", "config.env")
+EXCLUDED_FILES = (
+    "STAGING_MANIFEST.json",
+    ".gitignore",
+    ".gitattributes",
+    "config.env",
+    # 오케스트레이션 구성의 루트 파일 — 위 EXCLUDED_ROOTS와 같은 이유.
+    # 이 목록은 번들 루트에만 적용된다(iter_immutable_files의 at_top 조건).
+    # payload 하위에는 README.md·LICENSE·CLAUDE.md 등 동명 파일이 실제로
+    # 존재하므로, at_top 없이 이름만으로 제외하면 그것들이 아무 신호 없이
+    # 해시 범위 밖으로 나간다. 그 계약은 tests/test_manifest.py가 고정한다.
+    "CLAUDE.md",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "CHANGELOG.md",
+    "KNOWN_ISSUES.md",
+    "SESSION.template.md",
+    # 세션 이어가기 규율이 대상 PC에서 만들고 계속 갱신하는 가변·사적 상태다.
+    # config.env와 같은 이유로, 해시하면 규율을 따른 운영자에게 확정 실패가 뜬다.
+    "SESSION.md",
+    ".mcp.json",
+)
 # 파이썬 바이트코드는 대상 PC에서 verify_bundle.py가 import되는 순간 다시
 # 쓰인다. 즉 검사 대상이 검사 도중 바뀐다. 깊이와 무관하게 제외한다.
 EXCLUDED_DIR_NAMES = ("__pycache__",)

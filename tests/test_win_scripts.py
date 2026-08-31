@@ -1149,10 +1149,26 @@ def test_config_example_documents_the_cpu_opt_in():
 
 def test_start_pi_passes_the_pi_exit_code_through_unchanged():
     body = read("start-pi.bat")
-    launch = '"%ROOT%bin\\pi\\pi.exe" --offline --model "%PI_MODEL_ID%" %*'
+    launch = (
+        '"%ROOT%bin\\pi\\pi.exe" --offline --model "%PI_MODEL_ID%" '
+        '--thinking "%PI_THINKING%" %*'
+    )
     assert launch in body
     after = body[body.index(launch) + len(launch) :]
     assert after.splitlines()[1].strip() == "exit /b %errorlevel%"
+
+
+def test_both_scripts_pin_the_thinking_level_and_default_it():
+    # Qwen3.8의 채팅 템플릿은 reasoning_effort가 없으면 xhigh로 사고한다
+    # (GGUF tokenizer.chat_template 실측). 32768 창에서 그 기본값이 긴 턴을
+    # 자른다. 그래서 두 스크립트 모두 값을 명시해 넘기고, 이 키가 없던 시절의
+    # config.env를 쓰는 설치본을 위해 기본값을 스크립트 안에서 채운다.
+    for name in ("start-pi.bat", "verify-offline.bat"):
+        body = read(name)
+        assert 'if not defined PI_THINKING set "PI_THINKING=medium"' in body, name
+        assert '--thinking "%PI_THINKING%"' in body, name
+        # 기본값은 pi.exe를 부르기 전에 채워져야 한다.
+        assert body.index('if not defined PI_THINKING') < body.index('--thinking "%PI_THINKING%"'), name
 
 
 def test_package_sync_compares_the_whole_tree_not_just_two_anchor_files():

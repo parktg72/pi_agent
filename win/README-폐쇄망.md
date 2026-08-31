@@ -95,6 +95,41 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 `PI_MODEL_ID` 의 앞부분 `local` 은 번들 루트 `models.json` 이 선언하는 제공자
 이름이고, 뒷부분은 `MODEL_ALIAS` 와 **글자 그대로 같아야 한다.**
 
+## 사고 수준과 "Response was truncated before completion."
+
+Pi 화면에 이 영어 한 줄이 뜨고 턴이 그대로 끝나면, 모델이 답을 다 쓰기 전에
+출력 한도에 부딪힌 것이다. 공급자가 `finish_reason: "length"` 를 돌려줬다는
+뜻이고, Pi는 그 턴을 이어가지 않는다.
+
+이 번들에서 그 한도를 밀어붙이는 것은 대개 **사고 토큰**이다. GGUF 안의
+Qwen3.8 채팅 템플릿은 요청에 `reasoning_effort` 가 없으면 스스로 `xhigh` 를
+쓴다:
+
+```
+{%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+```
+
+사고 토큰은 답변과 같은 출력 예산을 쓴다. `-c 32768` 에 자동 압축이 16,384
+초과에서 발동하므로 실사용 답변 예산은 대략 12,000 토큰이고, xhigh 로 도는
+긴 턴은 그 선을 넘길 수 있다.
+
+그래서 `config.env` 에 `PI_THINKING` 이 있다.
+
+| 값 | 뜻 |
+|---|---|
+| `off` | 사고를 끈다. 템플릿이 `<think>` 를 즉시 닫는다 |
+| `low` | 짧게 생각하고 결론으로 간다 |
+| `medium` | 번들 기본값 |
+| `high` | 템플릿의 `xhigh` 로 매핑된다 — 가장 길게 생각한다 |
+
+`start-pi.bat` 이 이 값을 `--thinking` 으로 넘긴다. 비워 두거나 이 키가 없던
+시절의 `config.env` 를 쓰고 있으면 `medium` 이 적용된다. 세션 안에서는
+`/thinking` 으로 즉시 바꿀 수 있고, **Shift+Tab** 이 단계를 순환한다.
+
+잘림이 계속되면 순서는 이렇다: `/thinking low` → 그래도 잘리면 요청을 쪼개
+파일로 나눠 쓰게 한다 → 그래도면 `LLAMA_CTX` 상향을 검토한다(VRAM 실측이
+먼저다).
+
 ### 왜 `models.json` 이 필요한가
 
 `pi.exe` 에 내장된 llama.cpp 제공자는 llama-server가 **라우터 모드**로 떠
