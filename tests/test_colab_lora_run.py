@@ -32,10 +32,17 @@ active = json.loads(sessions.read_text()) if sessions.exists() else []
 if cmd == "sessions":
     print("\n".join(f"[{s}] endpoint-{s} | Hardware: H100" for s in active) if active else "[colab] No active sessions found on server.")
 elif cmd == "new":
+    if "--gpu" not in args:
+        (state / "new_without_gpu").write_text("1")
     active.append(args[args.index("-s") + 1]); sessions.write_text(json.dumps(active)); remote.mkdir(exist_ok=True)
 elif cmd == "status":
     print(f"[{args[args.index('-s') + 1]}] gpu-x | Hardware: {os.environ.get('MOCK_HW', 'H100')} | Variant: GPU | Status: IDLE")
 elif cmd == "stop":
+    tries = state / "stop_tries"
+    count = int(tries.read_text()) + 1 if tries.exists() else 1
+    tries.write_text(str(count))
+    if count <= int(os.environ.get("MOCK_STOP_FAILS", "0")):
+        print("ReadTimeout: read timed out"); sys.exit(1)
     active = [s for s in active if s != args[args.index("-s") + 1]]; sessions.write_text(json.dumps(active))
 elif cmd == "upload":
     src, dst = args[-2], Path(args[-1].replace("/content/pi-lora", str(remote)))
@@ -242,3 +249,25 @@ def test_a_leftover_session_with_our_name_is_refused_even_when_others_are_allowe
     res = run(env, ALLOW_OTHER_SESSIONS="1")
     assert res.returncode == 66
     assert "같은 이름" in res.stderr
+
+
+def test_smoke_on_a_cpu_runtime_round_trips_a_split_file_and_stops(env):
+    res = run(env, "smoke", GPU="CPU", MOCK_HW="CPU")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert (env["state"] / "new_without_gpu").exists()
+    work = next((env["tmp"] / "work").iterdir())
+    assert (work / "smoke.bin").stat().st_size == 45 * 1024 * 1024
+    assert not any("pip" in c for c in calls(env))
+    assert session_closed(env) and "완료(smoke)" in res.stderr
+
+
+def test_stop_is_retried_when_colab_times_out(env):
+    res = run(env, "smoke", GPU="CPU", MOCK_HW="CPU", MOCK_STOP_FAILS="2")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert (env["state"] / "stop_tries").read_text() == "3" and session_closed(env)
+
+
+def test_stop_that_keeps_failing_tells_how_to_delete_the_runtime(env):
+    res = run(env, "smoke", GPU="CPU", MOCK_HW="CPU", MOCK_STOP_FAILS="9")
+    assert res.returncode == 70, res.stdout + res.stderr
+    assert "런타임 관리" in res.stderr and "[pi-lora]" in res.stderr

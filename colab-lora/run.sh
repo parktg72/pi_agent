@@ -4,6 +4,7 @@
 #   run.sh trial <train.jsonl> <train.report.md> [train.py 추가 인자...]
 #   run.sh train <train.jsonl> <train.report.md> [train.py 추가 인자...]
 #   RESUME_FROM=<이전 work 폴더>/checkpoint run.sh train ...   # 시간 상한으로 멈춘 학습 이어 가기
+#   GPU=CPU run.sh smoke <train.jsonl> <train.report.md>      # 학습 없이 세션·exec·조각 전송·원격 작업·종료만 실측
 #
 # C단계 합의(tasks/pi-agent-lora-upgrade/artifacts/c-consensus.md) 10·12와 코드 리뷰(opencode)를 코드로 지킨다.
 # - 반출 데이터 sha256이 export-sessions.bat 보고서 값과 다르거나, 이미 Colab 세션이 있으면 시작하지 않는다.
@@ -22,8 +23,8 @@ MODE=${1:-}
 DATA=${2:-}
 REPORT=${3:-}
 shift 3 2>/dev/null || true
-if [[ "$MODE" != trial && "$MODE" != train ]] || [[ ! -f "$DATA" || ! -f "$REPORT" ]]; then
-  echo "usage: $0 trial|train <train.jsonl> <train.report.md> [train.py 추가 인자...]" >&2
+if [[ "$MODE" != trial && "$MODE" != train && "$MODE" != smoke ]] || [[ ! -f "$DATA" || ! -f "$REPORT" ]]; then
+  echo "usage: $0 trial|train|smoke <train.jsonl> <train.report.md> [train.py 추가 인자...]" >&2
   exit 64
 fi
 
@@ -35,7 +36,8 @@ POLL_SEC=${POLL_SEC:-60}
 PART_BYTES=${PART_BYTES:-40M}
 VERIFY_RESERVE_MIN=${VERIFY_RESERVE_MIN:-30}
 # trial 150분: 원본 56GB 받기·NF4 적재·causal-conv1d 빌드가 첫 스텝 전에 들어간다(추정 — 사전 시험 결과로 조정).
-if [[ "$MODE" == trial ]]; then WALL_MIN=${WALL_MIN:-150}; else WALL_MIN=${WALL_MIN:-600}; fi
+case "$MODE" in trial) WALL_MIN=${WALL_MIN:-150} ;; smoke) WALL_MIN=${WALL_MIN:-30} ;; *) WALL_MIN=${WALL_MIN:-600} ;; esac
+STOP_TRIES=${STOP_TRIES:-3}
 WALL_SEC=${WALL_SEC:-$(( WALL_MIN * 60 ))}  # 시험용으로 초 단위 지정 가능
 MIN_TRAIN_MIN=${MIN_TRAIN_MIN:-10}
 REMOTE=/content/pi-lora
@@ -99,83 +101,6 @@ fetch_file() { # VM 파일을 조각으로 받아 합치고 sha256을 대조한�
   echo "$got"
 }
 
-want=$(grep -o 'sha256: `[0-9a-f]\{64\}`' "$REPORT" | head -1 | grep -o '[0-9a-f]\{64\}' || true)
-data_sha=$(sha256sum "$DATA" | cut -d' ' -f1)
-if [[ -z "$want" || "$want" != "$data_sha" ]]; then
-  say "[FAIL] $DATA sha256 $data_sha 이 보고서 값(${want:-없음})과 다르다 - 반출 승인된 파일인지 확인"
-  exit 65
-fi
-if [[ -n "${RESUME_FROM:-}" ]] && [[ "$MODE" != train || ! -f "$RESUME_FROM/state.pt" || ! -f "$RESUME_FROM/adapter/adapter_model.safetensors" ]]; then
-  say "[FAIL] RESUME_FROM=$RESUME_FROM 은 train 모드의 checkpoint 폴더(state.pt, adapter/)여야 한다"
-  exit 64
-fi
-say "데이터 sha256 일치 $data_sha ($(wc -l < "$DATA") 샘플), 마감 $(date -d "@$deadline" +%H:%M)"
-
-ours() { grep -q "^\[$SESSION\]" <<<"$1"; }  # colab sessions 줄: [로컬이름] endpoint | Hardware: ...
-existing=$("$COLAB" sessions 2>&1 || true)
-if ours "$existing"; then
-  say "[FAIL] 같은 이름의 Colab 세션($SESSION)이 이미 있다 - 이전 실행이 남긴 것인지 확인하고 정리하라:"$'\n'"$existing"
-  exit 66
-fi
-if ! grep -q "No active sessions" <<<"$existing" && [[ "${ALLOW_OTHER_SESSIONS:-0}" != 1 ]]; then
-  say "[FAIL] 다른 Colab 세션이 있다(브라우저 런타임 등) - 정리하거나, 이 실행과 무관하면 ALLOW_OTHER_SESSIONS=1:"$'\n'"$existing"
-  exit 66
-fi
-
-created=0
-watchdog=""
-cleanup() {
-  local rc=$?
-  if [[ $created == 1 ]]; then
-    say "정리: VM 파일 삭제 후 세션 종료"
-    printf 'import shutil, os\nshutil.rmtree("%s", ignore_errors=True)\nshutil.rmtree("/content/verify-cache", ignore_errors=True)\nshutil.rmtree(os.path.expanduser("~/.cache/huggingface"), ignore_errors=True)\nprint("wiped")\n' "$REMOTE" \
-      | "$COLAB" exec -s "$SESSION" --timeout 300 >>"$LOG" 2>&1 || say "[warn] VM 파일 삭제 실패 - stop으로 VM이 사라지면 함께 지워진다"
-    "$COLAB" stop -s "$SESSION" >>"$LOG" 2>&1 || true
-    if ! ours "$("$COLAB" sessions 2>&1 || true)"; then
-      say "세션 종료 확인($SESSION이 서버 목록에 없음)"
-    else
-      say "[FAIL] 세션이 아직 서버에 있다 - 'colab sessions' 확인 후 수동으로 stop 하라"
-      rc=70
-    fi
-  fi
-  if [[ -n "$watchdog" ]]; then
-    kill -- -"$watchdog" 2>/dev/null || kill "$watchdog" 2>/dev/null || true
-  fi
-  exit $rc
-}
-trap cleanup EXIT
-trap 'exit 130' INT TERM
-
-say "세션 생성: $SESSION --gpu $GPU (마감까지 ${WALL_MIN}분)"
-created=1  # 생성 응답이 실패해도 서버에는 만들어졌을 수 있다 - 정리 대상으로 둔다
-setsid bash -c "sleep $(( WALL_SEC + 600 )); if \"\$1\" sessions 2>&1 | grep -q \"^\\[\$2\\]\"; then \"\$1\" stop -s \"\$2\"; fi" _ "$COLAB" "$SESSION" >>"$LOG" 2>&1 < /dev/null &
-watchdog=$!
-timeout 900 "$COLAB" new -s "$SESSION" --gpu "$GPU" >>"$LOG" 2>&1
-hardware=$("$COLAB" status -s "$SESSION" 2>&1 || true)
-echo "$hardware" >> "$LOG"
-if ! grep -Eq "Hardware: ${GPU}( |\||$)" <<<"$hardware"; then
-  say "[FAIL] 요청한 GPU($GPU)가 아니다 - 대체 할당으로 시간·비용만 쓰지 않게 멈춘다: $(grep -o 'Hardware: [^|]*' <<<"$hardware" | head -1)"
-  exit 77
-fi
-
-printf 'import os\nos.makedirs("%s/out", exist_ok=True)\nprint("ok")\n' "$REMOTE" | remote_py >>"$LOG" 2>&1
-push_file "$DATA" "$REMOTE/train.jsonl"
-for f in dataset.py train.py verify_load.py convert_adapter.py qwen38_chat_template.jinja requirements-colab.txt; do
-  push_file "$HERE/$f" "$REMOTE/$f"
-done
-if [[ -n "${RESUME_FROM:-}" ]]; then
-  push_file "$RESUME_FROM/state.pt" "$REMOTE/out/checkpoint/state.pt"
-  push_file "$RESUME_FROM/adapter/adapter_model.safetensors" "$REMOTE/out/checkpoint/adapter/adapter_model.safetensors"
-  push_file "$RESUME_FROM/adapter/adapter_config.json" "$REMOTE/out/checkpoint/adapter/adapter_config.json"
-fi
-say "업로드 완료(sha256 대조), 패키지 설치"
-pip_out=$(printf 'import subprocess, sys\nr = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "%s/requirements-colab.txt"], capture_output=True, text=True)\nprint(r.stdout[-3000:], r.stderr[-3000:])\nopen("%s/out/pip-freeze.txt", "w").write(subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True).stdout)\nprint("PIP_RC", r.returncode)\n' "$REMOTE" "$REMOTE" | remote_py 3600 2>&1 || true)
-echo "$pip_out" >> "$LOG"
-if ! grep -q "^PIP_RC 0" <<<"$pip_out"; then
-  say "[FAIL] 패키지 설치 실패"
-  exit 71
-fi
-
 # VM에서 파이썬 스크립트를 백그라운드로 띄우고(<name>.log, <name>.exit) 끝날 때까지 로그를 받아 온다.
 # colab exec는 출력 없이 --timeout을 넘기면 끊기므로 긴 작업을 전경에서 돌리지 않는다.
 # 인자는 JSON 목록으로 넘겨 argv로 전달한다 - 셸 따옴표를 거치지 않는다.
@@ -208,6 +133,117 @@ run_job() {
     fi
   done
 }
+
+want=$(grep -o 'sha256: `[0-9a-f]\{64\}`' "$REPORT" | head -1 | grep -o '[0-9a-f]\{64\}' || true)
+data_sha=$(sha256sum "$DATA" | cut -d' ' -f1)
+if [[ -z "$want" || "$want" != "$data_sha" ]]; then
+  say "[FAIL] $DATA sha256 $data_sha 이 보고서 값(${want:-없음})과 다르다 - 반출 승인된 파일인지 확인"
+  exit 65
+fi
+if [[ -n "${RESUME_FROM:-}" ]] && [[ "$MODE" != train || ! -f "$RESUME_FROM/state.pt" || ! -f "$RESUME_FROM/adapter/adapter_model.safetensors" ]]; then
+  say "[FAIL] RESUME_FROM=$RESUME_FROM 은 train 모드의 checkpoint 폴더(state.pt, adapter/)여야 한다"
+  exit 64
+fi
+say "데이터 sha256 일치 $data_sha ($(wc -l < "$DATA") 샘플), 마감 $(date -d "@$deadline" +%H:%M)"
+
+ours() { grep -q "^\[$SESSION\]" <<<"$1"; }  # colab sessions 줄: [로컬이름] endpoint | Hardware: ...
+existing=$("$COLAB" sessions 2>&1 || true)
+if ours "$existing"; then
+  say "[FAIL] 같은 이름의 Colab 세션($SESSION)이 이미 있다 - 이전 실행이 남긴 것인지 확인하고 정리하라:"$'\n'"$existing"
+  exit 66
+fi
+if ! grep -q "No active sessions" <<<"$existing" && [[ "${ALLOW_OTHER_SESSIONS:-0}" != 1 ]]; then
+  say "[FAIL] 다른 Colab 세션이 있다(브라우저 런타임 등) - 정리하거나, 이 실행과 무관하면 ALLOW_OTHER_SESSIONS=1:"$'\n'"$existing"
+  exit 66
+fi
+
+created=0
+watchdog=""
+cleanup() {
+  local rc=$?
+  if [[ $created == 1 ]]; then
+    say "정리: VM 파일 삭제 후 세션 종료"
+    printf 'import shutil, os\nshutil.rmtree("%s", ignore_errors=True)\nshutil.rmtree("/content/verify-cache", ignore_errors=True)\nshutil.rmtree(os.path.expanduser("~/.cache/huggingface"), ignore_errors=True)\nprint("wiped")\n' "$REMOTE" \
+      | "$COLAB" exec -s "$SESSION" --timeout 300 >>"$LOG" 2>&1 || say "[warn] VM 파일 삭제 실패 - stop으로 VM이 사라지면 함께 지워진다"
+    # colab stop의 할당 해제 요청이 Colab 서버에서 시간 초과로 실패할 수 있다(2026-09-17 A100 실측) - 재시도한다.
+    local try listing stopped=0
+    for (( try = 1; try <= STOP_TRIES; try++ )); do
+      timeout 400 "$COLAB" stop -s "$SESSION" >>"$LOG" 2>&1 || true
+      listing=$(timeout 150 "$COLAB" sessions 2>&1 || true)
+      if ! ours "$listing"; then
+        stopped=1
+        break
+      fi
+      say "[warn] 세션 종료 $try/$STOP_TRIES회 실패 - 다시 시도"
+    done
+    if [[ $stopped == 1 ]]; then
+      say "세션 종료 확인($SESSION이 서버 목록에 없음)"
+    else
+      say "[FAIL] 세션이 아직 서버에 있어 과금이 계속된다. 지금 브라우저 Colab(colab.research.google.com)의 '런타임 관리'에서 아래 런타임을 삭제하라: $(grep "^\[$SESSION\]" <<<"$listing" | head -1)"
+      rc=70
+    fi
+  fi
+  if [[ -n "$watchdog" ]]; then
+    kill -- -"$watchdog" 2>/dev/null || kill "$watchdog" 2>/dev/null || true
+  fi
+  exit $rc
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+say "세션 생성: $SESSION --gpu $GPU (마감까지 ${WALL_MIN}분)"
+created=1  # 생성 응답이 실패해도 서버에는 만들어졌을 수 있다 - 정리 대상으로 둔다
+setsid bash -c "sleep $(( WALL_SEC + 600 )); for i in 1 2 3; do \"\$1\" sessions 2>&1 | grep -q \"^\\[\$2\\]\" || exit 0; timeout 400 \"\$1\" stop -s \"\$2\"; done" _ "$COLAB" "$SESSION" >>"$LOG" 2>&1 < /dev/null &
+watchdog=$!
+if [[ "$GPU" == CPU ]]; then
+  timeout 900 "$COLAB" new -s "$SESSION" >>"$LOG" 2>&1
+else
+  timeout 900 "$COLAB" new -s "$SESSION" --gpu "$GPU" >>"$LOG" 2>&1
+fi
+hardware=$("$COLAB" status -s "$SESSION" 2>&1 || true)
+echo "$hardware" >> "$LOG"
+if ! grep -Eq "Hardware: ${GPU}( |\||$)" <<<"$hardware"; then
+  say "[FAIL] 요청한 GPU($GPU)가 아니다 - 대체 할당으로 시간·비용만 쓰지 않게 멈춘다: $(grep -o 'Hardware: [^|]*' <<<"$hardware" | head -1)"
+  exit 77
+fi
+
+printf 'import os\nos.makedirs("%s/out", exist_ok=True)\nprint("ok")\n' "$REMOTE" | remote_py >>"$LOG" 2>&1
+push_file "$DATA" "$REMOTE/train.jsonl"
+for f in dataset.py train.py verify_load.py convert_adapter.py qwen38_chat_template.jinja requirements-colab.txt; do
+  push_file "$HERE/$f" "$REMOTE/$f"
+done
+if [[ "$MODE" == smoke ]]; then
+  # 학습 대신 작은 원격 작업: 45MB 파일을 만들어 조각으로 되받는다(업로드·exec·백그라운드 작업·폴링·다운로드·종료 실측).
+  cat > "$WORK/smoke_job.py" <<'PY'
+import hashlib, json, os, platform, sys
+os.makedirs("out", exist_ok=True)
+data = os.urandom(45 * 1024 * 1024)
+open("out/smoke.bin", "wb").write(data)
+print(json.dumps({"event": "done", "python": platform.python_version(), "sha256": hashlib.sha256(data).hexdigest(), "args": sys.argv[1:]}), flush=True)
+PY
+  push_file "$WORK/smoke_job.py" "$REMOTE/smoke_job.py"
+  say "업로드 완료(sha256 대조), 원격 작업 시험"
+  run_job smoke smoke_job.py --probe
+  if [[ "$job_rc" != 0 ]]; then
+    say "[FAIL] 원격 작업 실패(종료코드 $job_rc)"
+    exit 73
+  fi
+  smoke_sha=$(fetch_file "$REMOTE/out/smoke.bin" "$WORK/smoke.bin")
+  say "완료(smoke): 45MB 조각 수신 sha256 $smoke_sha"
+  exit 0
+fi
+if [[ -n "${RESUME_FROM:-}" ]]; then
+  push_file "$RESUME_FROM/state.pt" "$REMOTE/out/checkpoint/state.pt"
+  push_file "$RESUME_FROM/adapter/adapter_model.safetensors" "$REMOTE/out/checkpoint/adapter/adapter_model.safetensors"
+  push_file "$RESUME_FROM/adapter/adapter_config.json" "$REMOTE/out/checkpoint/adapter/adapter_config.json"
+fi
+say "업로드 완료(sha256 대조), 패키지 설치"
+pip_out=$(printf 'import subprocess, sys\nr = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "%s/requirements-colab.txt"], capture_output=True, text=True)\nprint(r.stdout[-3000:], r.stderr[-3000:])\nopen("%s/out/pip-freeze.txt", "w").write(subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True).stdout)\nprint("PIP_RC", r.returncode)\n' "$REMOTE" "$REMOTE" | remote_py 3600 2>&1 || true)
+echo "$pip_out" >> "$LOG"
+if ! grep -q "^PIP_RC 0" <<<"$pip_out"; then
+  say "[FAIL] 패키지 설치 실패"
+  exit 71
+fi
 
 train_min=$(( $(remaining) / 60 - VERIFY_RESERVE_MIN - 5 ))
 if (( train_min < MIN_TRAIN_MIN )); then

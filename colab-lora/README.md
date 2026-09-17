@@ -35,6 +35,20 @@ python colab-lora/dataset.py --data train.jsonl --tokenizer Qwen/Qwen3.8-27B
 
 ## 4. Colab 실행
 
+**CLI 준비 확인(한 번)**: `colab-cli` 0.6.0은 `jupyter-kernel-client` 를 Google 포크로 고정한다. PyPI에서 같은 이름의
+다른 패키지(1.0.2)가 깔리면 `colab exec` 가 `module 'jupyter_kernel_client' has no attribute 'KernelClient'` 로
+실패한다(2026-09-17 실측) — 그 경우:
+
+```bash
+~/colab-env/bin/pip install "jupyter-kernel-client @ git+https://github.com/googlecolab/jupyter-kernel-client.git@f18e982c3265df5e923aa9def101ab3fd737e139"
+```
+
+GPU를 쓰기 전에 CPU 런타임으로 세션·업로드·원격 작업·조각 다운로드·종료가 실제로 되는지 본다(약 2분):
+
+```bash
+GPU=CPU SESSION=pi-lora-smoke colab-lora/run.sh smoke train.jsonl train.report.md
+```
+
 ```bash
 # 사전 시험: 반출 데이터가 아직 없으므로 합성 데이터로 최장 문맥(약 31k·62k 토큰)과 학습 대상이 많은 응답(약 8k)을 잰다
 python colab-lora/make_trial_data.py --base <v2 train.jsonl 예: 픽스처 export> --tokenizer Qwen/Qwen3.8-27B --out trial.jsonl
@@ -54,7 +68,9 @@ colab-lora/run.sh train train.jsonl train.report.md      # 본학습 (추가 인
 - 요청한 GPU가 아니면 업로드 전에 멈춘다(77). 마감은 실행 시작부터 `WALL_MIN`(trial 150, train 600분) 하나다. 설치·업로드·학습·검증·회수가 모두 그 안에
   들어가고, 학습에는 검증·회수 몫(`VERIFY_RESERVE_MIN` 30분)과 여유 5분을 뺀 시간만 준다. 자동 연장은 없다.
 - 세션 생성 시도부터 정리 대상이다. 어떤 종료 경로든 VM 파일을 지우고 `colab stop` 한 뒤 서버 목록에서
-  사라졌는지 확인한다. 이 스크립트가 죽어도 로컬 감시 프로세스가 마감 10분 뒤 stop한다.
+  사라졌는지 확인한다. Colab의 할당 해제 요청이 시간 초과로 실패할 수 있어(2026-09-17 A100 실측) 재시도하고,
+  끝내 남으면 브라우저 Colab '런타임 관리'에서 지울 런타임 이름을 알려 준다(70). 이 스크립트가 죽어도 로컬 감시
+  프로세스가 마감 10분 뒤 stop한다.
 - 모든 파일(데이터·코드·checkpoint·어댑터)은 40MB 조각으로 주고받고 양쪽 sha256을 대조한다.
   받은 `report.json` 의 데이터·어댑터·어댑터 설정 해시도 대조한다.
 - 학습이 시간 상한에 걸리면 checkpoint(어댑터+optimizer+scheduler+RNG+진행 위치+설정 지문)를 받아 두고
@@ -62,7 +78,8 @@ colab-lora/run.sh train train.jsonl train.report.md      # 본학습 (추가 인
 - 학습이 끝나면 VM에서 번들과 같은 Q6_K(sha256 대조)와 llama.cpp b11010에 어댑터를 올려
   텐서가 모두 적재되는지 확인한다(`verify.json`).
 
-환경변수: `GPU`(기본 H100), `SESSION`, `WALL_MIN`, `POLL_SEC`. 결과: `colab-lora/work/<시각>-<모드>/`
+환경변수: `GPU`(기본 H100, `CPU` 가능), `SESSION`, `WALL_MIN`, `POLL_SEC`, `STOP_TRIES`(종료 재시도, 기본 3),
+`ALLOW_OTHER_SESSIONS`. 결과: `colab-lora/work/<시각>-<모드>/`
 (Git 제외).
 
 종료 코드: 0 완료, 64 사용법·RESUME_FROM 오류, 65 데이터 sha 불일치, 66 기존 세션 있음, 70 세션이 안 닫힘
