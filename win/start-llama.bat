@@ -17,7 +17,7 @@ if errorlevel 1 exit /b 6
 
 if not defined LLAMA_BACKEND set "LLAMA_BACKEND=cuda"
 if not defined LLAMA_PORT set "LLAMA_PORT=8080"
-if not defined LLAMA_CTX set "LLAMA_CTX=32768"
+if not defined LLAMA_CTX set "LLAMA_CTX=63488"
 
 rem The Vulkan ban used to live only in README and the design spec, while this
 rem script accepted LLAMA_BACKEND=vulkan and ran it. A backend that returns
@@ -100,6 +100,12 @@ rem checkpoints, so the gain on Pascal is unmeasured.
 set "SPEC_ARG="
 if "%LLAMA_SPEC_MTP%"=="1" set "SPEC_ARG=--spec-type draft-mtp"
 
+rem Physical batch size. Blank keeps the llama.cpp default (512). Lower it only
+rem if long prompts trigger a Windows "display driver stopped responding" (TDR)
+rem reset on these cards - a field fallback that needs no edit to this hashed file.
+set "UBATCH_ARG="
+if defined LLAMA_UBATCH set "UBATCH_ARG=-ub %LLAMA_UBATCH%"
+
 rem LoRA adapter trained on the target PC. Clearing LORA_FILE is the rollback.
 rem --lora-scaled splits FNAME:SCALE on every colon, so an absolute H:\ path
 rem has one colon too many and startup fails. This script has already changed
@@ -126,7 +132,7 @@ if defined LORA_FILE echo [info] LoRA adapter lora\%LORA_FILE% at scale %LORA_SC
   -c %LLAMA_CTX% ^
   --parallel 1 ^
   -sm layer %TS_ARG% %MMPROJ_ARG% ^
-  -fa auto -fit off -ctk %LLAMA_KV_TYPE% -ctv %LLAMA_KV_TYPE% %CACHE_RAM_ARG% %SPEC_ARG% %LORA_ARG%
+  -fa auto -fit off -ctk %LLAMA_KV_TYPE% -ctv %LLAMA_KV_TYPE% %CACHE_RAM_ARG% %UBATCH_ARG% %SPEC_ARG% %LORA_ARG%
 exit /b %errorlevel%
 
 :load_config

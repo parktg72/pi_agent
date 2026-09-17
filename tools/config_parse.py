@@ -69,6 +69,25 @@ def _check_positive_int(value: str) -> str | None:
     return None
 
 
+def _check_context(value: str) -> str | None:
+    reason = _check_positive_int(value)
+    if reason:
+        return reason
+    # llama.cpp b11010 src/llama-context.cpp: n_ctx = GGML_PAD(n_ctx, 256). 배수가
+    # 아니면 서버는 올려 잡고 Pi의 contextWindow(이 값으로 렌더링)는 그대로라 두 창이
+    # 어긋난다.
+    number = int(value)
+    # tools/pi_settings.py의 compaction.reserveTokens 하한이 8192다. 창이 그 두 배보다
+    # 작으면 압축 임계가 창의 절반 아래로 내려가 매 턴 압축한다(opencode 리뷰).
+    if number < 16384:
+        return "16384 이상이어야 한다 - Pi 압축 예약(최소 8192)이 창의 절반을 넘는다"
+    if number % 256:
+        lower, upper = number // 256 * 256, (number // 256 + 1) * 256
+        suggestion = f"{lower} 또는 {upper}" if lower else f"{upper}"
+        return f"256의 배수여야 한다 - 서버가 올려 맞춰 Pi의 창과 어긋난다({suggestion})"
+    return None
+
+
 def _check_backend(value: str) -> str | None:
     if value.lower() not in BACKENDS:
         return f"{' | '.join(BACKENDS)} 중 하나여야 한다"
@@ -127,6 +146,13 @@ def _check_kv_type(value: str) -> str | None:
     return None
 
 
+def _check_ubatch(value: str) -> str | None:
+    # 현장 대응용(WDDM TDR 등). 2의 거듭제곱 16~2048만 받는다 - 기본 -b 2048을 넘기지 않는다.
+    if not value.isdigit() or int(value) not in (16, 32, 64, 128, 256, 512, 1024, 2048):
+        return "16~2048 사이의 2의 거듭제곱이어야 한다(예: 256)"
+    return None
+
+
 def _check_lora_file(value: str) -> str | None:
     # llama-server --lora-scaled는 FNAME:SCALE을 ':'로, 여러 개를 ','로 나눈다
     # (b11010 common/arg.cpp). 그 둘이 이름에 있으면 기동이 실패하거나 다른
@@ -155,7 +181,7 @@ def _check_lora_scale(value: str) -> str | None:
 ALLOWED_KEYS: dict[str, object] = {
     "LLAMA_BACKEND": _check_backend,
     "LLAMA_PORT": _check_port,
-    "LLAMA_CTX": _check_positive_int,
+    "LLAMA_CTX": _check_context,
     "MODEL_FILE": _check_filename,
     "MODEL_ALIAS": None,
     "GPU_TENSOR_SPLIT": _check_tensor_split,
@@ -177,6 +203,9 @@ ALLOWED_KEYS: dict[str, object] = {
     "LLAMA_KV_TYPE": _check_kv_type,
     "LLAMA_CACHE_RAM_MIB": _check_positive_int,
     "LLAMA_SPEC_MTP": _check_flag,
+    # 비우면 llama.cpp 기본 512. 기동·긴 prefill 중 "디스플레이 드라이버 응답 중지"(TDR)가
+    # 나올 때만 낮춘다 - README "GPU가 안 잡힐 때".
+    "LLAMA_UBATCH": _check_ubatch,
     # 대상 PC에서 학습한 LoRA 어댑터. 비우면 기본 모델만 뜬다(롤백 = 비우기).
     "LORA_FILE": _check_lora_file,
     "LORA_SCALE": _check_lora_scale,

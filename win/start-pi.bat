@@ -45,6 +45,16 @@ if errorlevel 1 exit /b 4
 call :sync_packages
 if errorlevel 1 exit /b 7
 
+rem Context safety floors in home\agent\settings.json, applied every run and
+rem only ever raised: compaction on, reserveTokens 3/8 of LLAMA_CTX, a
+rem keepRecentTokens ceiling, a 30-minute HTTP idle timeout and a 60-minute
+rem provider timeout. Pi's defaults (16384, 5 minutes, SDK 10 minutes) stop long
+rem work on 3x 1080 Ti: prefill of a long history sends no body bytes for
+rem minutes, and overflow recovery runs only once per run. Other keys and larger
+rem values the operator set are kept. Rationale: tools\pi_settings.py.
+%PYTHON_CMD% "%ROOT%tools\pi_settings.py" --settings "%PI_CODING_AGENT_DIR%\settings.json" --ctx "%LLAMA_CTX%"
+if errorlevel 1 exit /b 10
+
 %PYTHON_CMD% "%ROOT%tools\wait_model.py" --base-url "%LLAMA_BASE_URL%" --alias "%MODEL_ALIAS%" --timeout %MODEL_LOAD_TIMEOUT%
 if errorlevel 1 (
   echo [FAIL] the model is not ready - not starting Pi
@@ -102,9 +112,10 @@ if not exist "%ROOT%models.json" (
 )
 if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"
 rem contextWindow in the rendered models.json comes from LLAMA_CTX, the same
-rem value start-llama.bat gives the server, with the same default. A template
-rem that pinned 32768 once sat under a server started with 65536.
-if not defined LLAMA_CTX set "LLAMA_CTX=32768"
+rem value start-llama.bat gives the server, with the same default (63488, the
+rem config.env.example value). A template that pinned 32768 once sat under a
+rem server started with 65536.
+if not defined LLAMA_CTX set "LLAMA_CTX=63488"
 %BOOTSTRAP_PY% "%ROOT%tools\render_models_json.py" --template "%ROOT%models.json" --out "%PI_CODING_AGENT_DIR%\models.json" --port "%LLAMA_PORT%" --alias "%MODEL_ALIAS%" --model-id "%PI_MODEL_ID%" --ctx "%LLAMA_CTX%"
 if errorlevel 1 (
   echo [FAIL] could not render models.json into %PI_CODING_AGENT_DIR%
