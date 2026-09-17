@@ -92,6 +92,22 @@ colab-lora/run.sh train train.jsonl train.report.md      # 본학습 (추가 인
 `modules`(in_proj_a/b/qkv·lm_head가 Linear+bfloat16, `linear4bit_modules` > 0), `trial_checks` 의 피크 VRAM,
 `train.log` 의 `tokens_per_sec`, `verify.json` 의 `ok: true`·`returncodes` 0, 마지막 줄 "세션 종료 확인".
 
+### 사전 시험 실측 (2026-09-18, A100 40GB — 이 계정에서 H100·G4 권한 없음)
+
+| 항목 | 값 |
+|---|---|
+| 환경 | NVIDIA A100-SXM4-40GB(39.49GiB), torch 2.11.0+cu128, Python 3.13.15, flash-linear-attention 커널 사용 |
+| 원본 NF4 적재 | 약 5분(받기 포함), 21.2GiB, LoRA 1억 8백만 파라미터 |
+| 최대 학습 길이 | 11,467토큰 성공(peak 36.66GiB), 14,968토큰 이상 OOM — 1토큰당 약 1.35MB |
+| 처리량 | 첫 스텝은 커널 컴파일로 약 2분, 이후 약 700 토큰/초(11.5k 시퀀스 16.5초) |
+| checkpoint 재개 | 가중치 복원 확인 |
+| Q6_K 적재 | 번들 Q6_K(sha 일치) + b11010 llama-cli, LoRA 텐서 896/896 적재, 출력 변화 |
+| 전체 | 약 19분(세션 생성~종료) |
+
+**A100 40GB로 본학습하면 `--max-seq-len 11000` 을 준다.** 번들 기본 요청이 도구 스키마 포함 약 8.5k 토큰이라,
+긴 세션의 뒤쪽 응답은 보류된다. 실데이터에서 `dataset.py` 의 `over_length_targets` 비율을 보고 80GB급 GPU나
+메모리 절감(추가 시험 필요)을 정한다.
+
 ## 5. 변환
 
 ```bash
