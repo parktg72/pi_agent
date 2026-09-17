@@ -6,4 +6,6 @@ accelerate==1.15.0
 safetensors==0.8.0
 # Gated DeltaNet 커널. 없으면 train.py가 시작하지 않는다(torch 대체 경로는 긴 시퀀스에서 매우 느리다).
 flash-linear-attention==0.5.2
-causal-conv1d==1.7.0
+# causal-conv1d는 넣지 않는다: 1.7.0은 sdist뿐이라 Colab VM(Python 3.13)에서 빌드가 실패했고(2026-09-18 A100 실측),
+# pip는 한 패키지 빌드 실패로 전체 설치를 중단한다. transformers의 대체 구현은 벡터화된 F.conv1d 한 번이라 학습
+# 속도 영향이 작다(modeling_qwen3_5.causal_conv1d_fn).

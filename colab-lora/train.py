@@ -4,7 +4,8 @@
   prepare_model_for_kbit_training은 쓰지 않는다 - 비양자화 층을 전부 float32로 올려 수 GB를 더 쓴다.
 - 라벨은 dataset.py가 만든다. 손실은 대상 토큰 위치의 hidden state에만 lm_head를 조각으로 적용해 계산한다
   (전체 어휘 로짓 63k x 248k를 만들지 않는다, 합의 2). forward에 labels=를 넘기지 않는다.
-- Gated DeltaNet 커널(flash-linear-attention, causal-conv1d)이 없으면 시작하지 않는다(--allow-fallback은 CPU 시험용).
+- Gated DeltaNet 커널(flash-linear-attention)이 없거나 학습 중 torch 참조 구현으로 떨어지면 멈춘다(--allow-fallback은
+  CPU 시험용). causal-conv1d는 선택이다 - 대체 구현이 벡터화된 F.conv1d 한 번이라 기록만 한다.
 - 스텝 = 대상 토큰이 --target-tokens-per-step에 이를 때까지 모은 시퀀스 묶음. 손실은 묶음의 대상 토큰 평균.
 - checkpoint(어댑터+optimizer+scheduler+RNG+진행 위치)를 --checkpoint-minutes마다, 그리고 --time-limit-min 직전에 남긴다.
   시간 상한에 걸리면 checkpoint를 남기고 종료코드 5로 끝난다(자동 연장 없음, 합의 10).
@@ -264,7 +265,7 @@ def main(argv=None) -> int:
     torch.manual_seed(args.seed)
     kernels = kernel_status()
     log("start", versions=versions(), kernels=kernels, args={k: str(v) for k, v in vars(args).items()})
-    if not args.allow_fallback and not all(v is True for v in kernels.values()):
+    if not args.allow_fallback and kernels["flash_linear_attention"] is not True:
         log("fail", reason="Gated DeltaNet 커널 없음 - torch 경로는 긴 시퀀스에서 매우 느리다", kernels=kernels)
         return 2
 
@@ -328,8 +329,9 @@ def main(argv=None) -> int:
         metrics = {"total": total, "loss": round(loss_sum / step_targets, 4), "grad_norm": round(grad_norm, 4),
                    "lr": scheduler.get_last_lr()[0], "tokens": tokens, "target_tokens": step_targets, "sec": round(seconds, 2),
                    "tokens_per_sec": round(tokens / seconds, 1), "peak_gib": peak_memory_gib()}
-        if fallback.messages and not args.allow_fallback:
-            return {"fail": "Gated DeltaNet 커널 대신 torch 참조 구현이 쓰였다", "fallback": sorted(set(fallback.messages))}
+        blocking = sorted({m for m in fallback.messages if "causal_conv1d" not in m})
+        if blocking and not args.allow_fallback:
+            return {"fail": "Gated DeltaNet 커널 대신 torch 참조 구현이 쓰였다", "fallback": blocking}
         return metrics
 
     def recover_from_oom() -> None:

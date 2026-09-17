@@ -35,7 +35,7 @@ GPU=${GPU:-H100}
 POLL_SEC=${POLL_SEC:-60}
 PART_BYTES=${PART_BYTES:-40M}
 VERIFY_RESERVE_MIN=${VERIFY_RESERVE_MIN:-30}
-# trial 150분: 원본 56GB 받기·NF4 적재·causal-conv1d 빌드가 첫 스텝 전에 들어간다(추정 — 사전 시험 결과로 조정).
+# trial 150분: 패키지 설치·원본 56GB 받기·NF4 적재가 첫 스텝 전에 들어간다(추정 — 사전 시험 결과로 조정).
 case "$MODE" in trial) WALL_MIN=${WALL_MIN:-150} ;; smoke) WALL_MIN=${WALL_MIN:-30} ;; *) WALL_MIN=${WALL_MIN:-600} ;; esac
 STOP_TRIES=${STOP_TRIES:-3}
 WALL_SEC=${WALL_SEC:-$(( WALL_MIN * 60 ))}  # 시험용으로 초 단위 지정 가능
@@ -222,6 +222,32 @@ open("out/smoke.bin", "wb").write(data)
 print(json.dumps({"event": "done", "python": platform.python_version(), "sha256": hashlib.sha256(data).hexdigest(), "args": sys.argv[1:]}), flush=True)
 PY
   push_file "$WORK/smoke_job.py" "$REMOTE/smoke_job.py"
+  if [[ "${SMOKE_PIP:-0}" == 1 ]]; then
+    # GPU 비용 전에 학습 패키지 설치와 import가 되는지 본다(Colab 이미지·Python 버전 확인).
+    # 줄 시작의 표식으로만 판정한다 - 실패 traceback에 찍힌 소스 줄의 문자열을 성공으로 읽지 않게(2026-09-18 실측).
+    cat > "$WORK/smoke_imports.py" <<'PY'
+import sys
+import torch, transformers, peft, accelerate, bitsandbytes, safetensors
+print("IMPORTS_CORE_OK", sys.version.split()[0], torch.__version__, transformers.__version__, peft.__version__, bitsandbytes.__version__, flush=True)
+try:
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule  # noqa: F401
+    print("FLA_OK", flush=True)
+except Exception as error:  # CPU 런타임 torch에는 triton이 없다
+    print("FLA_FAIL", type(error).__name__, error, flush=True)
+PY
+    push_file "$WORK/smoke_imports.py" "$REMOTE/smoke_imports.py"
+    pip_out=$(printf 'import subprocess, sys\nr = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "%s/requirements-colab.txt"], capture_output=True, text=True)\nprint(r.stdout[-3000:], r.stderr[-6000:])\nprint("PIP_RC", r.returncode)\nc = subprocess.run([sys.executable, "%s/smoke_imports.py"], capture_output=True, text=True)\nprint(c.stdout)\nprint(c.stderr[-3000:])\n' "$REMOTE" "$REMOTE" | remote_py 3600 2>&1 || true)
+    echo "$pip_out" >> "$LOG"
+    grep -E "^(PIP_RC|IMPORTS_CORE_OK|FLA_OK|FLA_FAIL)" <<<"$pip_out" | sed 's/^/[smoke] /' >&2 || true
+    if ! grep -q "^PIP_RC 0" <<<"$pip_out" || ! grep -q "^IMPORTS_CORE_OK " <<<"$pip_out"; then
+      say "[FAIL] 학습 패키지 설치·import 실패 - $LOG 확인"
+      exit 71
+    fi
+    if [[ "$GPU" != CPU ]] && ! grep -q "^FLA_OK" <<<"$pip_out"; then
+      say "[FAIL] GPU 런타임에서 flash-linear-attention import 실패 - $LOG 확인"
+      exit 71
+    fi
+  fi
   say "업로드 완료(sha256 대조), 원격 작업 시험"
   run_job smoke smoke_job.py --probe
   if [[ "$job_rc" != 0 ]]; then
