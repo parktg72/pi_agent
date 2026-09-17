@@ -10,7 +10,7 @@
 2. **반출 승인**: 사람이 보고서(민감 후보·제외 사유 포함)를 읽고 기관 승인을 받는다.
    파일을 옮긴 뒤 `sha256sum train.jsonl` 이 보고서 값과 같은지 확인한다.
 3. **개발 PC — 점검(GPU 비용 없음)**: `dataset.py` 로 학습 시퀀스 통계를 본다.
-4. **개발 PC — Colab 사전 시험**(`run.sh trial`, H100 90분 상한) → 통과하면 본학습(`run.sh train`).
+4. **개발 PC — Colab 사전 시험**(`run.sh trial`, H100 150분 상한) → 통과하면 본학습(`run.sh train`).
 5. **개발 PC — 변환**: `convert_adapter.py` 로 GGUF를 만든다(sha256·텐서 수 기록).
 6. **반입**: `pi-lora-YYYYMMDD.gguf` 와 `.json`(sha256)을 승인 매체로 옮겨 `C:\pi_agent\lora\` 에 두고
    `config.env` 의 `LORA_FILE` 로 켠다. `verify-offline.bat` 통과와 `LORA_FILE` 비우기 롤백 확인 뒤 운영.
@@ -36,14 +36,21 @@ python colab-lora/dataset.py --data train.jsonl --tokenizer Qwen/Qwen3.8-27B
 ## 4. Colab 실행
 
 ```bash
-colab-lora/run.sh trial train.jsonl train.report.md      # 사전 시험
+# 사전 시험: 반출 데이터가 아직 없으므로 합성 데이터로 최장 문맥(약 31k·62k 토큰)과 학습 대상이 많은 응답(약 8k)을 잰다
+python colab-lora/make_trial_data.py --base <v2 train.jsonl 예: 픽스처 export> --tokenizer Qwen/Qwen3.8-27B --out trial.jsonl
+colab-lora/run.sh trial trial.jsonl trial.report.md --max-seq-len 65536 --holdout 0
+
 colab-lora/run.sh train train.jsonl train.report.md      # 본학습 (추가 인자는 train.py로)
 ```
+
+사전 시험의 결과(`trial_checks` 피크 VRAM)로 본학습의 `--max-seq-len`(기본 32768)을 정한다. 합성 데이터라
+품질은 재지 않는다 — 커널·메모리·NF4 제외 목록·Q6_K 적재만 본다. 본학습 평가(보류 세션을 학습 전·후 두 번)는
+보류 세션이 많고 길면 수십 분이 들 수 있다.
 
 `run.sh` 가 코드로 지키는 것:
 
 - 데이터 sha256이 보고서 값과 다르거나, 이미 Colab 세션이 있으면 시작하지 않는다.
-- 마감은 실행 시작부터 `WALL_MIN`(trial 90, train 600분) 하나다. 설치·업로드·학습·검증·회수가 모두 그 안에
+- 요청한 GPU가 아니면 업로드 전에 멈춘다(77). 마감은 실행 시작부터 `WALL_MIN`(trial 150, train 600분) 하나다. 설치·업로드·학습·검증·회수가 모두 그 안에
   들어가고, 학습에는 검증·회수 몫(`VERIFY_RESERVE_MIN` 30분)과 여유 5분을 뺀 시간만 준다. 자동 연장은 없다.
 - 세션 생성 시도부터 정리 대상이다. 어떤 종료 경로든 VM 파일을 지우고 `colab stop` 한 뒤 서버 목록에서
   사라졌는지 확인한다. 이 스크립트가 죽어도 로컬 감시 프로세스가 마감 10분 뒤 stop한다.
@@ -59,7 +66,7 @@ colab-lora/run.sh train train.jsonl train.report.md      # 본학습 (추가 인
 
 종료 코드: 0 완료, 64 사용법·RESUME_FROM 오류, 65 데이터 sha 불일치, 66 기존 세션 있음, 70 세션이 안 닫힘
 (수동 stop), 71 패키지 설치 실패, 72 마감 초과, 73 학습 실패, 74 해시 불일치, 75 Q6_K 적재 검증 실패,
-76 시간 상한으로 멈춤(checkpoint 받음).
+76 시간 상한으로 멈춤(checkpoint 받음), 77 요청과 다른 GPU 할당.
 
 **사전 시험 통과 조건**(합의 12): `train.py --trial` 이 종료코드 0 — 코드가 검사하는 것은 커널 대체 경고 없음
 (첫 스텝 뒤), loss·grad 유한, 매 스텝 LoRA 가중치 실제 갱신, checkpoint 재개가 망가뜨린 가중치를 복원. 짧은

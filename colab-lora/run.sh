@@ -7,7 +7,8 @@
 #
 # C단계 합의(tasks/pi-agent-lora-upgrade/artifacts/c-consensus.md) 10·12와 코드 리뷰(opencode)를 코드로 지킨다.
 # - 반출 데이터 sha256이 export-sessions.bat 보고서 값과 다르거나, 이미 Colab 세션이 있으면 시작하지 않는다.
-# - 마감 시각은 실행 시작부터 WALL_MIN(trial 90, train 600분)으로 하나다. 설치·업로드·학습·검증·회수가 모두
+# - 요청한 GPU가 아니면(Colab이 A100 대신 L4를 주는 경우 등) 업로드 전에 멈춘다(종료코드 77).
+# - 마감 시각은 실행 시작부터 WALL_MIN(trial 150, train 600분)으로 하나다. 설치·업로드·학습·검증·회수가 모두
 #   그 안에 들어가야 하고, 학습에는 검증·회수 몫(VERIFY_RESERVE_MIN)을 뺀 시간만 준다. 자동 연장은 없다.
 # - 세션 생성 시도부터 정리 대상이다. 어떤 종료 경로든 VM 파일을 지우고 stop한 뒤 서버 목록에서 사라졌는지 본다.
 #   이 스크립트가 죽어도 로컬 감시 프로세스가 마감 10분 뒤 stop한다(colab new가 띄운 keep-alive가 VM을 살려 두므로).
@@ -33,7 +34,8 @@ GPU=${GPU:-H100}
 POLL_SEC=${POLL_SEC:-60}
 PART_BYTES=${PART_BYTES:-40M}
 VERIFY_RESERVE_MIN=${VERIFY_RESERVE_MIN:-30}
-if [[ "$MODE" == trial ]]; then WALL_MIN=${WALL_MIN:-90}; else WALL_MIN=${WALL_MIN:-600}; fi
+# trial 150분: 원본 56GB 받기·NF4 적재·causal-conv1d 빌드가 첫 스텝 전에 들어간다(추정 — 사전 시험 결과로 조정).
+if [[ "$MODE" == trial ]]; then WALL_MIN=${WALL_MIN:-150}; else WALL_MIN=${WALL_MIN:-600}; fi
 WALL_SEC=${WALL_SEC:-$(( WALL_MIN * 60 ))}  # 시험용으로 초 단위 지정 가능
 MIN_TRAIN_MIN=${MIN_TRAIN_MIN:-10}
 REMOTE=/content/pi-lora
@@ -144,6 +146,12 @@ created=1  # 생성 응답이 실패해도 서버에는 만들어졌을 수 있�
 setsid bash -c "sleep $(( WALL_SEC + 600 )); if ! \"\$1\" sessions 2>&1 | grep -q 'No active sessions'; then \"\$1\" stop -s \"\$2\"; fi" _ "$COLAB" "$SESSION" >>"$LOG" 2>&1 < /dev/null &
 watchdog=$!
 timeout 900 "$COLAB" new -s "$SESSION" --gpu "$GPU" >>"$LOG" 2>&1
+hardware=$("$COLAB" status -s "$SESSION" 2>&1 || true)
+echo "$hardware" >> "$LOG"
+if ! grep -Eq "Hardware: ${GPU}( |\||$)" <<<"$hardware"; then
+  say "[FAIL] 요청한 GPU($GPU)가 아니다 - 대체 할당으로 시간·비용만 쓰지 않게 멈춘다: $(grep -o 'Hardware: [^|]*' <<<"$hardware" | head -1)"
+  exit 77
+fi
 
 printf 'import os\nos.makedirs("%s/out", exist_ok=True)\nprint("ok")\n' "$REMOTE" | remote_py >>"$LOG" 2>&1
 push_file "$DATA" "$REMOTE/train.jsonl"

@@ -33,6 +33,8 @@ if cmd == "sessions":
     print("\n".join(f"[x] {s} | Hardware: H100" for s in active) if active else "[colab] No active sessions found on server.")
 elif cmd == "new":
     active.append(args[args.index("-s") + 1]); sessions.write_text(json.dumps(active)); remote.mkdir(exist_ok=True)
+elif cmd == "status":
+    print(f"[{args[args.index('-s') + 1]}] gpu-x | Hardware: {os.environ.get('MOCK_HW', 'H100')} | Variant: GPU | Status: IDLE")
 elif cmd == "stop":
     active = [s for s in active if s != args[args.index("-s") + 1]]; sessions.write_text(json.dumps(active))
 elif cmd == "upload":
@@ -133,7 +135,7 @@ def test_success_downloads_split_adapter_verifies_hash_and_stops(env):
     adapter = work / "adapter" / "adapter_model.safetensors"
     report = json.loads((work / "report.json").read_text())
     assert hashlib.sha256(adapter.read_bytes()).hexdigest() == report["adapter_sha256"]
-    assert int(report["args"][report["args"].index("--time-limit-min") + 1]) >= 50  # 90분 - 검증 몫 30 - 5
+    assert int(report["args"][report["args"].index("--time-limit-min") + 1]) >= 110  # 150분 - 검증 몫 30 - 5
     assert "--trial" in report["args"] and report["args"][-2:] == ["--lr", "5e-5"]
     downloads = [c for c in calls(env) if c.startswith("download") and "adapter_model.safetensors.part_" in c]
     assert len(downloads) == 2  # 45MB -> 40MB 조각 2개
@@ -216,3 +218,11 @@ def test_watchdog_is_not_left_running(env):
     assert res.returncode == 0
     leftovers = subprocess.run(["pgrep", "-f", f"sleep {90 * 60 + 600}"], capture_output=True, text=True).stdout.split()
     assert leftovers == []
+
+
+def test_a_substituted_gpu_stops_before_uploading(env):
+    res = run(env, MOCK_HW="L4")
+    assert res.returncode == 77, res.stdout + res.stderr
+    assert "L4" in res.stderr
+    assert not any(c.startswith("upload") for c in calls(env))
+    assert any(c.startswith("stop") for c in calls(env)) and session_closed(env)
