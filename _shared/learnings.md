@@ -88,3 +88,8 @@
 "pro-high 쓰지 마라"(D4/INV9) 같은 **환경 한계발 금지 규칙**은 그 환경(백엔드)이 바뀌면 근거가 사라진다. pro-high 제외 사유는 옛 antigravity-claude-proxy의 `400 INVALID_ARGUMENT`였는데, 백엔드를 `agy` CLI로 바꾸니 pro-high가 정상 작동(spike 실증). → 금지 규칙엔 **"무엇 때문에 금지인지(원인 계층)"를 함께 적어야**, 원인이 사라졌을 때 안전하게 해제할 수 있다. 또 모델 셀렉션이 도구마다 다름을 확인: agy는 모델이 **전역·계정단위**(`/model`)라 per-call 핀 불가 → worker별 다른 모델 동시 사용은 안 되고, gemini 전용 전역을 pro-high로 고정해 운용. 마이그레이션은 D4·INV9·INV10·routing·validate C6를 **한 묶음으로** 갱신해야 내부 모순(validate가 새 정본을 FAIL)이 안 생긴다.
 **근거**: agy spike S1 GREEN + 3자 검수(codex #8이 "옛 정책과 충돌" 지적 → 검증하니 정책을 갱신해야 하는 것이었음). backends.json이 gemini 호출 정본, mcp__gemini-pro__/mcp__gemini__ 브리지 폐기.
 **worker**: orchestrator(마이그레이션·라이브 편집), codex-critic+gemini=agy(검수)
+
+## [2026-09-17] [pi-agent-lora-upgrade]
+**교훈**: pane(다른 모델) 합의·리뷰에서 나온 **사실 주장은 소스나 실측으로 판정한 뒤에만 채택**한다 — 다수결로 채택하지 않는다. 이번에 두 pane이 독립적으로 같은 틀린 주장("Pascal은 flash-attn 불가")을 냈고, 교차검토 pane은 "`--prompt-template`가 시스템 프롬프트를 덮어쓴다"고 단언했다. 둘 다 그럴듯했지만 전자는 llama.cpp `fattn.cu` 커널 선택 코드로, 후자는 stub 서버에 들어온 요청 본문 비교(system 7467자 동일, 템플릿 펼침·인자 치환 확인)로 반박됐다. 반대로 같은 리뷰에서 나온 `)`가 배치 if 블록을 깨는 지적은 유효해 반영했다. 판정 근거는 산출물 폴더에 증거 파일로 남겨 pane에 되돌려 주면 다음 라운드의 재논쟁이 없다. 운영 측면: pane 에이전트는 파일 도구가 없을 수 있으니(opencode 메인 에이전트가 위임 전용) 첫 요청에서 "파일을 못 읽으면 못 읽는다고만 답하라"를 넣고, 답은 채팅으로 받은 뒤 그 도구의 로컬 저장소에서 원문을 추출해 파일로 보존한다.
+**근거**: R1 두 pane 공통 오류 → R2에서 근거 제시 후 스스로 정정. agy 문서 리뷰 #1 실측 반박(`artifacts/retro-template-probe/`), opencode 리뷰 #2 유효 반영(회귀 테스트 추가).
+**worker**: orchestrator(판정·실측), herdr pane agy·opencode(의견·구현·리뷰), Sonnet 서브에이전트(CPU 실측)

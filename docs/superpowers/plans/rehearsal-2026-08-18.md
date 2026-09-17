@@ -41,14 +41,14 @@ PCIe 토폴로지·RAM·디스크, 지속 부하 시 전력·온도)는 아래 �
    "이건 리허설 사본"임을 스스로 헷갈리지 않게 한다).
 2. `config.env`가 이미 있는지 확인한다. 스테이징 단계(Task 8a)에서 아래
    값을 채운 `config.env`가 만들어져 매니페스트에 포함됐다:
-   - `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf`
+   - `MODEL_FILE=Qwen3.8-27B-Q6_K.gguf` (2026-09-17부터 기본. 백업 `Qwen3.8-27B-Q4_K_M.gguf`)
    - `MODEL_ALIAS=qwen3.8-27b`
    - `MMPROJ_FILE=mmproj-Qwen3.8-27B-BF16.gguf`
    - `GPU_TENSOR_SPLIT=`(비어 있음 — 이 문서 §3에서 채운다)
    - `PI_MODEL_ID=local/qwen3.8-27b` (Pi에 넘길 제공자 한정 모델 ID —
      뒷부분이 `MODEL_ALIAS`와 글자 그대로 같아야 한다)
    - `PI_PROVIDER=local` (번들 루트 `models.json`이 선언하는 제공자 이름)
-   - `MODEL_LOAD_TIMEOUT=600` (모델 적재 대기 최대 초. 15.66GB를 느린
+   - `MODEL_LOAD_TIMEOUT=600` (모델 적재 대기 최대 초. Q6_K 20.9GiB(Q4_K_M 15.66GB)를 느린
      디스크에서 올려 600초로 모자라면 여기서 늘린다)
 3. **매니페스트 무결성부터 확인한다** — 전송 중 손상은 여기서 잡는다(§10):
    ```
@@ -110,7 +110,7 @@ start-llama.bat
 이 창은 서버가 사는 곳이므로 리허설 내내 닫지 않는다.
 
 **기대 결과:**
-- 콘솔에 `[info] starting Qwen3.8-27B-Q4_K_M.gguf as qwen3.8-27b on the cuda backend`가
+- 콘솔에 `[info] starting Qwen3.8-27B-Q6_K.gguf as qwen3.8-27b on the cuda backend`가
   찍히고, 이어서 llama.cpp의 정상 기동 로그(레이어별 텐서 배치, KV 캐시
   크기, `main: server is listening on http://127.0.0.1:8080` 류의 메시지)가
   나온다.
@@ -248,7 +248,7 @@ mode`, 동봉 `bin\pi\docs\llama-cpp.md`도 "Start `llama-server` without
    ```
    **기대 결과:** `settings.json`의 `packages` 배열에 4개 패키지가 모두
    있고, `npm\node_modules\` 밑에 `pi-subagents`, `@juicesharp\rpiv-todo`,
-   `@juicesharp\rpiv-ask-user-question`, `jiti`, `typebox`, `yaml`이
+   `@juicesharp\rpiv-ask-user-question`, `jiti`, `typebox`, `yaml`(0.68.0부터 `acorn`, `undici`도)이
    보이고, `superpowers\.git\`이 실제로 존재한다(윈도우에서 `.git`은
    숨김 속성이라 `dir /a` 로 봐야 보일 수 있다 — 2026-08-18 실측, `/H`
    없이 `xcopy`하면 통째로 스킵된다).
@@ -394,7 +394,7 @@ start-pi.bat
 
 **실패 시 다음에 볼 것:**
 - `[FAIL] the model is not ready` → 관문 ②가 사실 실패였거나 600초
-  타임아웃 안에 적재가 안 끝난 것. 모델이 15.66GB라 디스크가 느리면
+  타임아웃 안에 적재가 안 끝난 것. 모델이 20.9GiB(Q6_K)라 디스크가 느리면
   적재 자체가 오래 걸릴 수 있다 — §0에서 디스크 여유/속도도 함께
   본다.
 - 툴 호출 자체가 안 일어남(모델이 그냥 텍스트로만 답함) → §8.3의 7개
@@ -639,7 +639,7 @@ start-pi.bat
    줄이지 않는다. 관문 ③에서 잰 토큰/초가 실사용에 버틸 만한지가 이번
    리허설의 실질적 판정 포인트 중 하나다 — 너무 느리면 §6의 "백업 모델"
    반입 여부를 여기서 다시 논의해야 한다.
-4. **`pi-subagents`의 백그라운드 위임은 폐쇄망에서 못 쓴다.**
+4. **`pi-subagents`의 백그라운드 위임은 폐쇄망에서 못 쓴다.** *(0.50.0 기준. 0.68.0은 소스상 `pi.exe`로 러너를 띄운다 — §11-4에서 재확인)*
    포어그라운드 위임은 `pi.exe` 자신을 스폰하므로 Node 없이 동작하지만
    (`runs/shared/pi-spawn.ts`), 백그라운드/async 위임은
    `runs/background/async-execution.ts`가 `node.exe`로 러너를 스폰하므로
@@ -650,6 +650,46 @@ start-pi.bat
    동시 요청도 폭주가 아니라 직렬화다: `--parallel 1`이므로 위임 N개를
    겹치면 지연이 N배가 되고 재시도와 겹쳐 타임아웃처럼 보인다.
    백그라운드 위임에 의존하는 워크플로가 필요하면
-   `home\agent\settings.json`에서 `npm:pi-subagents@0.50.0` 항목을 빼거나
+   `home\agent\settings.json`에서 `npm:pi-subagents@0.68.0` 항목을 빼거나
    `--no-extensions`로 세션별로 끄는 것을 고려한다
    (`README-폐쇄망.md`의 "확장을 끄고 싶을 때" 절 참고).
+
+## 11. 2026-09-17 개선분 리허설 — Pi 0.85.1 · llama.cpp b11010 · 설정 · LoRA
+
+스펙 §14. 위 §0~§8을 새 번들로 한 번 그대로 돈 뒤, 아래를 추가로 잰다.
+**전후 비교가 목적이다** — 각 항목은 바꾸기 전 값과 바꾼 뒤 값을 같이 적는다.
+재는 방법이 같아야 비교가 된다: 같은 프롬프트(예: `verify-offline.bat`의 툴
+왕복, 그리고 약 8천 토큰짜리 긴 파일 요약 1건), llama-server 콘솔의
+`prompt eval time`/`eval time` 줄의 tokens per second, `nvidia-smi` 3장의
+memory.used.
+
+| # | 확인 | 방법 | 통과 기준 | 기록 |
+|---|---|---|---|---|
+| 11-1 | b11010 CUDA 기동 | §3 관문 ① 그대로 | 3장 인식·전 층 GPU·`/v1/models` alias | |
+| 11-2 | `-fa auto` on Pascal | 기동 로그의 `flash_attn` 줄 | `enabled`. `not supported, set to disabled`이면 스펙 §14.4 판단이 틀린 것 — 그 줄과 앞뒤 경고를 기록 | |
+| 11-3 | contextWindow 렌더링 | `home\agent\models.json`의 `contextWindow` | `config.env` `LLAMA_CTX`와 같다 | |
+| 11-4 | 백그라운드 서브에이전트 | Pi에서 `subagent` 툴을 async/background로 1회 위임 | `ENOENT` 없이 완료. 실패면 로그 원문 기록 | |
+| 11-5 | 컨텍스트 65536 VRAM | Q6_K(기본), KV f16, mmproj 켠 상태 | 3장 모두 OOM 없음, 각 장 memory.used 기록 | |
+| 11-6 | KV q8_0 | `LLAMA_KV_TYPE=q8_0` | VRAM 감소량, 툴 왕복 통과, 토큰/초 변화 | |
+| 11-7 | RAM 프롬프트 캐시 | `LLAMA_CACHE_RAM_MIB=32768`에서 본 세션 → 서브에이전트 1회 → 본 세션 다음 턴 | 다음 턴 prompt eval 토큰 수가 전체 이력보다 작다(캐시 적중) | |
+| 11-8 | MTP A/B | `LLAMA_SPEC_MTP=0` vs `1`, 같은 긴 생성 | 1이 eval tokens/s에서 이기고 툴 왕복이 통과할 때만 기본값을 1로 바꾼다 | |
+| 11-9 | Q6_K 기본값 | 기본 `config.env`(Q6_K, KV f16, 65536) 그대로 §3 관문 ① | 3장 모두 OOM 없음, 장별 memory.used·eval tokens/s 기록. OOM이면 `LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf` 순으로 내려가며 각 단계 값을 기록. Q4_K_M 토큰/초도 한 번 재서 차이를 적는다 | |
+| 11-10 | `llama-fit-params.exe` | README 2단계 명령 | 실행 가능 여부(Device Guard 차단 여부)와 출력 `-ts` | |
+| 11-11 | `/retro` 템플릿 | Pi에서 `/retro` 입력 | 자동완성에 뜨고, 파일을 쓰지 않고 제안만 출력 | |
+| 11-12 | L2 추출 | `lora\approved.txt`에 실제 세션 ID 1개 → `export-sessions.bat` | exit 0, `lora\train.jsonl` 줄 수 1, 한글 사유·마스킹 건수가 깨지지 않고 출력 | |
+
+### 11-13. LoRA 학습 스택(L3) — 반입을 결정한 경우에만
+
+학습은 번들에 들어 있지 않다. 반입을 결정하면 인터넷 되는 이 PC에서 먼저 아래를
+통과시키고, 통과한 휠·원본만 싣는다.
+
+| 확인 | 통과 기준 |
+|---|---|
+| PyTorch 윈도우 cu126 휠(2.14.0 이하) `torch.cuda.get_arch_list()` | `sm_61` 포함, `torch.cuda.is_available()` True, 1080 Ti 3장 인식 |
+| cuDNN | 휠이 싣는 cuDNN이 compute 6.1에서 conv 1회 실행(검색 결과는 9.12에서 6.1 지원이 빠졌다고 한다 — 미확인) |
+| bitsandbytes 윈도우 휠 4bit(NF4) | 1080 Ti에서 `Linear4bit` 순전파·역전파 1회 성공 |
+| PEFT 타깃 모듈 | 텍스트 층(`model.language_model.layers.*`)만, **`linear_attn.out_proj` 제외** — 포함하면 `convert_lora_to_gguf.py`가 `NotImplementedError`(스펙 §14.5 L3 CPU 실측) |
+| 27B QLoRA `device_map` 3장 분산 | 시퀀스 길이 2048에서 1스텝 성공, 스텝당 초·장별 피크 VRAM |
+| 어댑터 변환·적재 | `convert_lora_to_gguf.py` → `lora\<파일>.gguf` → `LORA_FILE` 설정 → `start-llama.bat` 기동·`verify-offline.bat` 통과 |
+| 학습 전후 평가 | 고정 문항 10개 + 툴 왕복 — 어댑터가 툴 호출 형식을 망가뜨리면 폐기 |
+

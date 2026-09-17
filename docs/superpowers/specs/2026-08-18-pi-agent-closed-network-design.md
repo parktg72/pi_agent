@@ -3,11 +3,12 @@
 작성일: 2026-08-18
 상태: **구현 완료, 현장 리허설 미수행** (2026-08-20 갱신). 스테이징(`H:\model\pi_agent`)과 `.bat`·도구·테스트는 모두 있고 229개 테스트가 통과한다. GPU가 달린 PC에서의 실기 리허설(`docs/superpowers/plans/rehearsal-2026-08-18.md`)은 아직 수행하지 않았다 — 즉 실제 GGUF를 적재한 llama-server와 Pi의 왕복은 이 저장소에서 아직 관측된 적이 없다.
 리뷰: OpenCode / GPT-5.6 Sol (herdr `wF:p2`), 서브에이전트 4종 분산 조사. 전체 판정 `conditional`, 조건은 아래 6개 항목으로 반영 완료.
+개선 라운드: 2026-09-17 — Pi 0.85.1·pi-subagents 0.68.0·rpiv 2.10.1·llama.cpp b11010 교체, 설정 최적화, LoRA 경로. 변경점과 근거는 §14. 이 문서의 §1~§13은 당시 측정을 보존하고, 버전 핀만 현재 값으로 고쳤다.
 재리뷰: 2026-08-19 GPT-5.6 Sol 독립 감사, 판정 **수정 전 NO-GO** — "현재 검증 체계는 실패를 성공으로 승인할 수 있다". 지적 5건(실패의 exit 0 보고, 포트 이중 정의, `config.env`의 CMD 실행, 위험 백엔드가 문서로만 금지, 앵커만 보는 패키지 동기화)은 2026-08-20 `feature/fail-loudly`에서 고쳤다. 인수인계 기록은 `docs/superpowers/plans/handoff-2026-08-20.md`.
 
 ## 1. 목표
 
-인터넷이 전혀 없는 윈도우 PC에서 Pi 코딩 에이전트(`@earendil-works/pi-coding-agent` v0.84.2)를 실행한다. 모델은 같은 PC에서 llama.cpp로 서빙한다. 외부 API 호출은 없다.
+인터넷이 전혀 없는 윈도우 PC에서 Pi 코딩 에이전트(`@earendil-works/pi-coding-agent` v0.85.1 — 2026-09-17 교체, 최초 설계 시 v0.84.2)를 실행한다. 모델은 같은 PC에서 llama.cpp로 서빙한다. 외부 API 호출은 없다.
 
 ## 2. 제약
 
@@ -446,8 +447,9 @@ git 소스는 더 단순해서 존재 여부만 본다.
 
 ### 13.4 반입 패키지 4개
 
-`git:github.com/obra/superpowers@v6.3.0`(필수), `npm:pi-subagents@0.50.0`(필수),
-`npm:@juicesharp/rpiv-todo@2.6.1`, `npm:@juicesharp/rpiv-ask-user-question@2.6.1`.
+`git:github.com/obra/superpowers@v6.3.0`(필수), `npm:pi-subagents@0.68.0`(필수),
+`npm:@juicesharp/rpiv-todo@2.10.1`, `npm:@juicesharp/rpiv-ask-user-question@2.10.1`
+(2026-09-17 교체 — 최초 반입은 0.50.0 / 2.6.1. §14.2).
 선정 근거와 비교 조사한 대안(각 비추천 사유 포함)은 조사 문서 §2·§3에
 있다. 각 패키지가 실사용에서 하는 일은 `win\README-폐쇄망.md`의 "Pi
 확장·스킬" 절에 표로 정리했다. 전부 전역(user) 스코프로만 설치한다 —
@@ -497,3 +499,64 @@ git 소스는 더 단순해서 존재 여부만 본다.
    N배가 되고, 그것이 재시도·타임아웃과 겹쳐 "멈춘 것처럼" 보인다.
    대응은 `--parallel`을 올리는 것이 아니라(KV 캐시가 슬롯 수만큼
    쪼개진다) 동시 위임 수를 줄이는 것이다.
+
+## 14. 2026-09-17 개선 라운드
+
+herdr pane 합의(claude·agy·opencode, 기록: 개발 트리 `tasks/pi-agent-lora-upgrade/artifacts/consensus.md` — 반입 번들 밖)를 거쳐 정한 변경이다. 이 스테이징 PC에는 GPU가 없다. 아래에서 "확인"은 소스·바이너리·stub 왕복으로 확인한 것이고, VRAM·토큰/초·학습 속도는 §14.6 리허설 항목이다.
+
+### 14.1 llama.cpp b10470 → b11010
+
+- 자산: `llama-b11010-bin-win-cuda-12.4-x64.zip` 254,193,004 bytes SHA256 `f66167619958a9c94a3ff43f0f847a83399716f40d70c2c7c9ed097d0a11c280`, cpu 18,438,370 `3011251607251eca68ae67e35512364d9943d862ff598599ff9a4888c1753008`, vulkan 31,710,621 `6fb7020fe34c2989b924f88b55e716f2d29ccd7934a99fc3b89f7783f361d8cd`. cudart zip은 b10470과 해시 동일. 전부 GitHub 릴리스 digest와 일치.
+- Pascal: `ggml/src/ggml-cuda/CMakeLists.txt`는 여전히 `CUDAToolkit_VERSION < 13`일 때 `61-virtual`을 넣고, `release.yml` 윈도우 CUDA 잡은 아키텍처를 지정하지 않는다 → §3.3 결론 유지. CPU 백엔드 병합(`for target_zip ...`)도 유지.
+- zip 구성 변화: `libomp140.x86_64.dll` → `libomp.dll`(+`LICENSE-LLVM-OpenMP`), `llama-template-analysis.exe` 제거. 옛 파일이 섞이지 않게 `bin\llama-*`를 비우고 다시 풀었다(구판은 번들 밖 `pi_agent_rollback\`).
+- `llama-server.exe --version`: `version: 0.4.1-dev (build 11010, commit 4bc272fd7)` — 윈도우에서 실행 확인. `--help`에 이 번들이 쓰는 인자가 모두 있다.
+
+### 14.2 Pi 0.84.2 → 0.85.1, 확장 패키지
+
+- `pi-windows-x64.zip` 45,009,021 bytes SHA256 `002fa95b90d521245b9985d8f168caebc237ad56e7e30b319807dee1b2e17e1c`(릴리스 `SHA256SUMS`와 일치). `pi.exe` import 테이블은 §3.1과 같은 OS DLL 7개(objdump).
+- §6.1 클립보드 애드온 경로가 `node_modules/@mariozechner/clipboard/clipboard.win32-x64-msvc.node`로 옮겨졌다(0.84.3 "native clipboard binary only inside the wrapper package"). 이미지 붙여넣기 키는 `docs/keybindings.md` 기준 윈도우 `alt+v` 그대로.
+- `models.json` 스키마: `thinkingLevelMap`, `compat.thinkingFormat: "chat-template"`, `chatTemplateKwargs`의 `$var`/`omitWhenOff`가 0.85.1 `docs/models.md`·`dist/core/model-config.js`에 그대로 있다.
+- 패키지: 윈도우 `pi.exe` 0.85.1로 `pi install` — superpowers v6.3.0(변동 없음), pi-subagents 0.68.0, rpiv-todo·rpiv-ask-user-question 2.10.1. 전부 exit 0, 네이티브 바이너리 0개, 설치 PC 절대경로 유입 0건. pi-subagents 의존성에 `acorn`, `undici` 추가.
+- §13.5 백그라운드 위임: 0.68.0 `src/runs/shared/pi-spawn.ts` `resolveBunPiExecutable()`이 Bun 단독 `pi.exe`를 감지하면 `spawnRunner`가 `pi.exe` 자신을 `--mode rpc`로 띄운다 → Node 없는 PC의 `ENOENT`는 **소스상 해소**. 실행 확인은 §14.6.
+- stub 왕복(윈도우): 번들 파이썬 stub 서버 + `pi.exe` 0.85.1 + 확장 4종 + 렌더링된 `models.json` → `pi list` rc 0, `--mode json` 왕복 rc 0, `tools\tool_roundtrip.py` `[ok]`. 요청 본문에 `chat_template_kwargs: {enable_thinking, reasoning_effort}`가 실렸다.
+
+### 14.3 contextWindow 단일 출처
+
+결함: `config.env` `LLAMA_CTX=65536`인데 템플릿 `contextWindow`가 32768로 고정 → Pi가 서버 창의 절반만 가정(stub 요청 `max_completion_tokens` 25539 실측), `contextWindow - 16384`에서 조기 압축. 수정: `render_models_json.py --ctx`(필수)가 alias 모델의 `contextWindow`를 `LLAMA_CTX`로 쓰고 `maxTokens`를 그 이하로 줄인다. `start-pi.bat`·`verify-offline.bat`은 `start-llama.bat`과 같은 기본값(32768)으로 넘긴다. `config.env.example` 기본값은 65536(KV f16 약 4.0 GiB — 전체 어텐션 16층만 KV를 가진다, §6 산술).
+
+### 14.4 llama-server 설정 (근거: b11010 소스)
+
+| 항목 | 값 | 근거 |
+|---|---|---|
+| `-fa auto` 명시 | 항상 | `ggml-cuda/fattn.cu` `ggml_cuda_get_best_fattn_kernel`: 텐서코어 없는 GPU는 TILE/VEC. `common.cuh` `FLASH_ATTN_AVAILABLE`은 `GGML_CUDA_NO_FA`가 아니면 정의 → auto가 enabled로 풀린다. pane R1의 "Pascal FA 불가"는 틀렸다. `on`이 아니라 `auto`인 이유: `src/llama-context.cpp`에서 `on`은 장치 probe(`llm_fused_op_flash_attn_probe`)를 건너뛰어, 지원 안 되는 장치면 연산이 다른 백엔드(CPU)로 배정된다. 양자화 V 캐시는 auto를 스스로 enabled로 바꾼다 |
+| `LLAMA_KV_TYPE` | f16 \| q8_0 | `ggml_cuda_fattn_kv_type_supported`에 q8_0 포함. 단 TILE 커널(Pascal prefill)은 `need_f16_K/V`로 F16 임시 사본을 만든다(`ggml_cuda_flash_attn_ext_get_alloc_size`) → 최대 VRAM 절감은 저장분 절반보다 작다. 디코드(VEC)는 양자화 KV를 직접 읽는다 |
+| `LLAMA_CACHE_RAM_MIB` | 예시 32768 | `--cache-ram` 기본 8192. 슬롯 1개에서 서브에이전트 턴 전환 후 재prefill 회피 |
+| `LLAMA_SPEC_MTP` | 기본 0 | `--spec-type draft-mtp`("MTP heads from the main model"). 하이브리드는 `common_context_can_seq_rm`이 FULL → 체크포인트로 되감기, Pascal 이득 미측정 |
+| `-ngl 999`·`-ts`·`-fit off` | 유지 | `common/fit.cpp`: `-ngl`을 사용자가 주면 fit은 "n_gpu_layers already set by user"로 포기하며 매 기동 abort 줄을 남긴다 → `-fit off`로 명시. 자동 분배 대신 번들 동봉 `llama-fit-params.exe`로 한 번 계산해 `GPU_TENSOR_SPLIT`에 고정하는 절차를 README에 둔다 — 결정성 유지(§5). 스테이징 PC에서는 이 exe가 Device Guard에 차단됐다 |
+| `LORA_FILE`·`LORA_SCALE` | 비움·1.0 | §14.5 |
+
+### 14.5 LoRA — 장기 사용 간접학습
+
+합의 판정: "쓰면 쓸수록 모델이 스스로 학습"은 그대로는 성립하지 않는다. 상시 학습은 없고, 사람이 고른 세션으로 주기적 오프라인 배치 학습 → 평가 → 적재가 가능한 최대치다. 27B 학습은 "불가"가 아니라 "경로는 있으나 극저속, 실측 전 미확정".
+
+- **L0 비가중치 학습(구현)** — Pi 프롬프트 템플릿 `/retro`(`pi-prompts\retro.md`, 해시 범위 안, `start-pi.bat`이 `--prompt-template`으로 직접 로드). 세션 교훈을 AGENTS.md 추가안으로 제안만 하고 승인 후 반영, LoRA 승인 후보 여부를 안내한다.
+- **L1 적재(구현)** — `config.env` `LORA_FILE`(허용 문자 `[A-Za-z0-9._-]`, `.gguf`)·`LORA_SCALE`(0<s≤2) → `--lora-scaled "lora\<파일>:<scale>"`. **상대경로인 이유:** `common/arg.cpp`가 `FNAME:SCALE`을 모든 `:`로 나눠 `parts.size() != 2`면 거부 — `C:\...` 절대경로는 기동 실패. 어댑터 파일이 없으면 exit 2. `lora\`는 현장 생성물이라 매니페스트 제외(`.venv`와 같은 이유). 롤백 = `LORA_FILE` 비우기. 어댑터를 바꾼 뒤 `verify-offline.bat` 툴 왕복 통과가 활성 조건.
+- **L2 데이터(구현, agy)** — `export-sessions.bat`(chcp 65001·PYTHONIOENCODING 고정 래퍼) → `tools\export_sessions.py`: 승인 목록(`lora\approved.txt`)의 세션만, leaf→root 활성 경로, OpenAI chat 형식, thinking 기본 제거, 이미지 대체, 비밀 마스킹, `stopReason` error/aborted 제외, 누락 승인 id는 exit 2, 샘플 0개는 exit 3. 입력 형식 근거는 0.85.1 `docs/session-format.md`와 실제 `pi.exe`가 쓴 세션 fixture.
+- **L3 학습 키트(미반입, 설계만)** — 확인된 사실: PyTorch 2.14.0 윈도우 cu126 휠의 `TORCH_CUDA_ARCH_LIST`에 6.1 포함(cu128+는 7.5부터, `.ci/pytorch/windows/build_env_setup.py`); transformers 5.17 `qwen3_5`는 fla/causal-conv1d 없이 torch fallback 보유; HF `Qwen/Qwen3.8-27B` BF16 18샤드(27.78B) 반입 필요(GGUF로는 학습 불가); llama.cpp 자체 finetune은 FP32·WIP라 대상 아님. 추정: 윈도우 PyTorch에는 NCCL이 없어 FSDP 대신 단일 프로세스 `device_map` 분산이 유일 경로. 반입 여부는 사용자 결정.
+- **L3 CPU 실측(2026-09-17, 초소형 qwen3_5)** — `Qwen3_5ForCausalLM`(4층: linear 3 + full 1, linear key/value 헤드 2/4) 랜덤 초기화. torch 2.14.0+cpu·transformers 5.17.0·peft 0.21.0·gguf(b11010 gguf-py): (1) causal-conv1d·fla 없이 torch fallback으로 LoRA 1스텝 역전파, 학습 파라미터 62개 전부 기울기 ≠ 0. (2) `convert_lora_to_gguf.py`: **`linear_attn.out_proj`에 LoRA를 걸면 `_reorder_v_heads`에서 `NotImplementedError`(키/값 헤드 수가 다른 V-head 재배열을 저랭크 텐서에 못 한다)** — 실제 27B도 16/48로 같은 조건이므로 학습 대상 모듈에서 `out_proj`를 뺀다. 빼면 full-attn q/k/v/o, MLP gate/up/down, linear-attn in_proj_qkv·z·a·b가 전부 변환됐다(텐서 56개). (3) 윈도우 b11010 CPU `llama-cli.exe`: `--lora` 적재 `loaded 56 tensors`, 출력이 기본 모델과 달라짐; `--lora-scaled adapter.gguf:1.0`(상대) 동일 출력; `--lora-scaled C:\...:1.0`(절대)은 `lora-scaled format: FNAME:SCALE`로 exit 1. (4) 번들 `start-llama.bat`(CPU 진단 모드, 같은 초소형 모델)로 기동 → `/lora-adapters`에 `lora\pi-tiny-probe.gguf` scale 0.5. 남은 차이: 실제 원본은 비전 포함 복합 모델(`model.language_model.*`, `mtp.*` 15텐서)이라 텍스트 층만 타깃하는 PEFT 설정과 복합 모델 기준 변환은 미검증. 초소형 모델은 head dim 16이라 `LLAMA_KV_TYPE=q8_0`(블록 32)이 거부됐다 — 실제 모델은 key_length 256이라 해당 없음. 기록: 개발 트리 `tasks/pi-agent-lora-upgrade/artifacts/l3-probe/`, `start-llama-probe/`.
+
+### 14.6 기본 모델 Q6_K (2026-09-17 사용자 결정)
+
+반입 모델: `Qwen3.8-27B-Q6_K.gguf`(기본) + `Qwen3.8-27B-Q4_K_M.gguf`(백업) + `mmproj-Qwen3.8-27B-BF16.gguf`. 스테이징 PC `models\`의 `Qwen3.8-27B-Q8_0.gguf`, `Qwen3.8-27B-Uncensored-GGUF\`, `DeepSeek-R1-0528-Qwen3-8B-GGUF\`는 파일을 옮기지 않고 `tools\manifest.py` `EXCLUDED_PATHS`(번들 루트 기준 정확한 경로)로 해시에서 뺐다. `stage.py model-check`도 같은 목록을 건너뛴다. 해시에서 뺀 모델은 반입 매체에 함께 복사돼도 전송 손상을 검사받지 않으므로 `tools\config_parse.py`가 `MODEL_FILE`·`MMPROJ_FILE`이 그 경로 아래를 가리키면 거부한다(agy 리뷰). `model-check`는 `general.architecture=clip`이고 이름이 `mmproj`로 시작하는 프로젝터만 건너뛰고(이전에는 mmproj를 채팅 모델로 검사해 오탐 FAIL), 검사한 채팅 모델이 0개면 실패한다(opencode 리뷰).
+
+Q6_K GGUF 실측(gguf-py `GGUFReader`, 2026-09-17): `general.architecture = qwen35`, `file_type` 18, `block_count` 65(`nextn_predict_layers` 1), `embedding_length` 5120, `attention.key_length` 256, `head_count_kv` 4, `full_attention_interval` 4, 텐서 전부 Q6_K(+F32 0.01 GiB), `tokenizer.chat_template`에 도구 호출 포함, `gguf.check_tool_capable` 문제 없음.
+
+| 텐서 묶음 | Q6_K | Q4_K_M | 위치 |
+|---|---|---|---|
+| blk 0~63 | 18.61 GiB | 13.76 GiB | GPU |
+| output + norm | 0.97 | 0.97 | GPU(마지막 장) |
+| token_embd | 0.97 | 0.67 | 호스트 RAM(`-ngl`과 무관하게 입력층은 CPU) |
+| MTP blk 64 | 0.32 | 0.25 | `load_mtp`가 false면 적재 안 함(`src/llama-model.cpp` 기본값) — `LLAMA_SPEC_MTP=1`일 때만 |
+
+VRAM 산술(65536, KV f16): 층 18.61 + 출력 0.97 + KV 4.0(§14.3) + 선형 어텐션 상태 약 0.16(48층 × `time_step_rank` 48 × 128 × `state_size` 128 × 4B + conv) + mmproj 0.87 ≈ **24.6 GiB**, 여기에 연산 버퍼(출력 logits만 ub 512 × vocab 248,320 × 4B ≈ 0.47 GiB)와 장별 CUDA/WDDM 오버헤드, GPU0 디스플레이 점유가 더해진다. 3 × 11 GiB 안에 산술로는 들어가지만 장별 적재는 리허설 §11-9에서 확인한다. Q8_0(층+출력 약 25 GiB)은 KV를 더하면 넘친다. 디코드는 토큰당 읽는 가중치가 Q4_K_M의 약 1.33배라 20~25% 느릴 것으로 추정한다(미측정). OOM이면 `LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE`을 Q4_K_M으로.
+
