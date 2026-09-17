@@ -209,6 +209,8 @@ ALLOWED_KEYS: dict[str, object] = {
     # 대상 PC에서 학습한 LoRA 어댑터. 비우면 기본 모델만 뜬다(롤백 = 비우기).
     "LORA_FILE": _check_lora_file,
     "LORA_SCALE": _check_lora_scale,
+    # pi-extensions\learning.ts 자동 반성. start-pi.bat이 환경변수로 넘기고 확장이 읽는다.
+    "LEARNING_AUTO_REFLECT": _check_flag,
 }
 
 

@@ -85,7 +85,7 @@ set "SYNC_RC=!errorlevel!"
 rem Same context safety floors start-pi.bat applies (tools\pi_settings.py), so
 rem the round trip below runs with the settings the operator will run with. A
 rem failure counts against the Pi configuration verdict with models.json.
-%PYTHON_CMD% "%ROOT%tools\pi_settings.py" --settings "%PI_CODING_AGENT_DIR%\settings.json" --ctx "%LLAMA_CTX%"
+%PYTHON_CMD% "%ROOT%tools\pi_settings.py" --settings "%PI_CODING_AGENT_DIR%\settings.json" --ctx "%LLAMA_CTX%" --subagent-config "%PI_CODING_AGENT_DIR%\extensions\subagent\config.json"
 if errorlevel 1 set "RENDER_RC=1"
 "%ROOT%bin\pi\pi.exe" list > "%EV%\pi-packages.txt" 2>&1
 set "PI_LIST_RC=!errorlevel!"
@@ -100,7 +100,13 @@ set "PROBE=%EV%\probe.txt"
 rem Same thinking level the operator actually runs with (see start-pi.bat).
 rem A round trip proved at a level nobody uses is evidence about nothing.
 if not defined PI_THINKING set "PI_THINKING=medium"
-"%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" --tools read --mode json -p "%PROBE% - read this file with the read tool and answer with exactly the word written in it" > "%EV%\pi-tool-roundtrip.json" 2>&1
+rem The learning extension is loaded so a broken extension fails this check, but
+rem its automatic reflection must never add a turn to the judged round trip.
+set "LEARNING_AUTO_REFLECT=0"
+set "EXT_ARG="
+if exist "%ROOT%pi-extensions\learning.ts" set EXT_ARG=--extension "%ROOT%pi-extensions\learning.ts"
+if exist "%ROOT%pi-extensions\lora-snapshot.ts" set EXT_ARG=%EXT_ARG% --extension "%ROOT%pi-extensions\lora-snapshot.ts"
+"%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %EXT_ARG% --tools read --mode json -p "%PROBE% - read this file with the read tool and answer with exactly the word written in it" > "%EV%\pi-tool-roundtrip.json" 2>&1
 set "ROUNDTRIP_RC=!errorlevel!"
 type "%EV%\pi-tool-roundtrip.json"
 echo [info] pi.exe exit code was !ROUNDTRIP_RC! - it is now part of the verdict.
