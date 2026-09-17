@@ -1,0 +1,9 @@
+# Colab VM에 설치하는 학습 패키지 (2026-09-17 고정). torch는 Colab 기본 설치본을 쓰고 버전은 report.json·pip-freeze.txt에 남긴다.
+transformers==5.17.0
+peft==0.21.0
+bitsandbytes==0.50.2
+accelerate==1.15.0
+safetensors==0.8.0
+# Gated DeltaNet 커널. 없으면 train.py가 시작하지 않는다(torch 대체 경로는 긴 시퀀스에서 매우 느리다).
+flash-linear-attention==0.5.2
+causal-conv1d==1.7.0

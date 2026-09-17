@@ -176,6 +176,8 @@ def test_manifest_scope_holds_the_payload_in_and_the_mutable_areas_out(tmp_path)
     (root / "packages_win" / "requirements.txt").write_text("numpy\n")
     (root / ".venv" / "Lib").mkdir(parents=True)
     (root / ".venv" / "Lib" / "installed.py").write_text("x")
+    (root / "colab-lora").mkdir()
+    (root / "colab-lora" / "train.py").write_text("x")
 
     doc = manifest.build(root, staged_at="2026-08-18T00:00:00Z", target="T")
     listed = {entry["relative"] for entry in doc["files"]}
@@ -188,7 +190,7 @@ def test_manifest_scope_holds_the_payload_in_and_the_mutable_areas_out(tmp_path)
     ):
         assert inside in listed, f"{inside}는 해시 범위 안이어야 한다"
 
-    for outside_root in (".venv/", "home/", "evidence/"):
+    for outside_root in (".venv/", "home/", "evidence/", "colab-lora/"):
         assert not any(rel.startswith(outside_root) for rel in listed), outside_root
 
 
