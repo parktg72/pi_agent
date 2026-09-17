@@ -350,8 +350,9 @@ npm/git이 전혀 필요 없다 — npm/git은 오직 **설치할 때만** 쓰�
 `Qwen3.8-27B-Q8_0.gguf`, `Qwen3.8-27B-Uncensored-GGUF\`,
 `DeepSeek-R1-0528-Qwen3-8B-GGUF\`. 매니페스트는 이 셋을 경로로 빼 두었으므로
 같이 복사돼도 `verify-bundle.bat` 은 조용하다. 약 63GB이니 복사할 때 빼는 편이
-낫다(예: `robocopy H:\model\pi_agent C:\pi_agent /E /XF Qwen3.8-27B-Q8_0.gguf
-/XD Qwen3.8-27B-Uncensored-GGUF DeepSeek-R1-0528-Qwen3-8B-GGUF`).
+낫다. 개발 PC에서 Colab 학습에 쓰는 `colab-lora\` 도 폐쇄망에는 필요 없다(예:
+`robocopy H:\model\pi_agent C:\pi_agent /E /XF Qwen3.8-27B-Q8_0.gguf
+/XD Qwen3.8-27B-Uncensored-GGUF DeepSeek-R1-0528-Qwen3-8B-GGUF colab-lora`).
 
 ## 이전 번들에서 올릴 때 (Pi 0.84.2 → 0.85.1)
 
@@ -575,10 +576,17 @@ C:\pi_agent\export-sessions.bat
 **`train.jsonl` 을 PC 밖(예: Colab)으로 옮기는 것은 반출이다.** 보고서를 사람이 읽고
 기관의 반출 승인을 받은 뒤에만 옮기고, 옮긴 파일의 sha256이 보고서 값과 같은지 확인한다.
 
-**3단계 — 학습.** 이 번들에는 학습 도구가 없다. 1080 Ti 3장에서 27B 학습은
-경로는 있지만 매우 느리고, 원본 가중치(약 56GB)와 학습용 파이썬 스택을 따로
-반입해야 한다. 학습할 때 LoRA 대상에서 `linear_attn.out_proj` 는 빼야 한다 — 넣으면 GGUF 변환이 실패한다(2026-09-17 CPU 실측). 반입 전 확인 절차는
-`docs/superpowers/plans/rehearsal-2026-08-18.md` §11-13(개발 트리 문서).
+**3단계 — 학습(폐쇄망 밖).** 이 번들에는 학습 도구가 없다. 1080 Ti 3장에서 27B 학습은 매우
+느려, 반출이 승인되면 인터넷 되는 개발 PC에서 Google Colab GPU로 학습한다. 절차·가드·합격 기준은
+개발 트리의 `colab-lora\README.md` 에 있다(이 폴더는 반입 대상이 아니다). 요점:
+
+- `train.jsonl` 의 sha256이 `train.report.md` 값과 같아야 시작한다.
+- 학습 결과 어댑터는 Colab에서 번들과 같은 Q6_K·llama.cpp b11010에 올려 텐서 적재를 확인하고,
+  개발 PC에서 GGUF로 바꿔 sha256을 적는다. 반입할 것은 `.gguf` 와 그 `.json`(sha256) 둘뿐이다.
+- 학습 대상 모듈에서 `linear_attn.out_proj` 는 빠져 있다 — 넣으면 GGUF 변환이 실패한다(2026-09-17 CPU 실측).
+
+폐쇄망 안에서 직접 학습하려면 원본 가중치(약 56GB)와 학습용 파이썬 스택을 따로 반입해야 한다. 반입 전
+확인 절차는 `docs/superpowers/plans/rehearsal-2026-08-18.md` §11-13(개발 트리 문서).
 
 **4단계 — 어댑터 켜기와 되돌리기.** 학습 결과를 GGUF 어댑터로 변환한 파일을
 `C:\pi_agent\lora\` 에 두고 `config.env` 에 적는다.
@@ -588,7 +596,8 @@ set "LORA_FILE=pi-sessions-2026-10.gguf"
 set "LORA_SCALE=1.0"
 ```
 
-`start-llama.bat` 을 다시 띄운 뒤 **`verify-offline.bat` 이 통과해야 켜 둔다.**
+반입한 파일은 켜기 전에 `certutil -hashfile C:\pi_agent\lora\<파일>.gguf SHA256` 이 함께 온 `.json` 의 `sha256` 과
+같은지 확인한다. `start-llama.bat` 을 다시 띄운 뒤 **`verify-offline.bat` 이 통과해야 켜 둔다.**
 툴 왕복이 깨지면 그 어댑터는 버린다. 되돌리기는 `LORA_FILE` 을 비우고
 `start-llama.bat` 을 다시 띄우는 것이 전부다. 파일 이름에는 영문·숫자·`._-`
 만 쓴다 — 콜론·괄호·공백이 들어가면 `config.env` 검사가 거부한다(llama-server가

@@ -19,6 +19,8 @@ evidence/
 .venv/
 # 대상 PC에서 학습해 넣는 LoRA 어댑터·승인 목록·학습 데이터 (config.env LORA_FILE)
 /lora/
+# Colab 학습 작업물: 반출 데이터·체크포인트·어댑터·내려받은 설정은 커밋하지 않는다
+/colab-lora/work/
 
 # 스테이징 산출물
 .cache/
