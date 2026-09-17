@@ -5,6 +5,7 @@
 #   run.sh train <train.jsonl> <train.report.md> [train.py 추가 인자...]
 #   RESUME_FROM=<이전 work 폴더>/checkpoint run.sh train ...   # 시간 상한으로 멈춘 학습 이어 가기
 #   GPU=CPU run.sh smoke <train.jsonl> <train.report.md>      # 학습 없이 세션·exec·조각 전송·원격 작업·종료만 실측
+#   GPU=CPU SMOKE_TRAIN=1 run.sh smoke ...                    # + 설치·import·초소형 모델 train.py --trial CPU 리허설
 #
 # C단계 합의(tasks/pi-agent-lora-upgrade/artifacts/c-consensus.md) 10·12와 코드 리뷰(opencode)를 코드로 지킨다.
 # - 반출 데이터 sha256이 export-sessions.bat 보고서 값과 다르거나, 이미 Colab 세션이 있으면 시작하지 않는다.
@@ -209,7 +210,7 @@ fi
 
 printf 'import os\nos.makedirs("%s/out", exist_ok=True)\nprint("ok")\n' "$REMOTE" | remote_py >>"$LOG" 2>&1
 push_file "$DATA" "$REMOTE/train.jsonl"
-for f in dataset.py train.py verify_load.py convert_adapter.py qwen38_chat_template.jinja requirements-colab.txt; do
+for f in dataset.py train.py verify_load.py convert_adapter.py make_tiny_model.py qwen38_chat_template.jinja requirements-colab.txt; do
   push_file "$HERE/$f" "$REMOTE/$f"
 done
 if [[ "$MODE" == smoke ]]; then
@@ -222,6 +223,7 @@ open("out/smoke.bin", "wb").write(data)
 print(json.dumps({"event": "done", "python": platform.python_version(), "sha256": hashlib.sha256(data).hexdigest(), "args": sys.argv[1:]}), flush=True)
 PY
   push_file "$WORK/smoke_job.py" "$REMOTE/smoke_job.py"
+  [[ "${SMOKE_TRAIN:-0}" == 1 ]] && SMOKE_PIP=1
   if [[ "${SMOKE_PIP:-0}" == 1 ]]; then
     # GPU 비용 전에 학습 패키지 설치와 import가 되는지 본다(Colab 이미지·Python 버전 확인).
     # 줄 시작의 표식으로만 판정한다 - 실패 traceback에 찍힌 소스 줄의 문자열을 성공으로 읽지 않게(2026-09-18 실측).
@@ -236,7 +238,7 @@ except Exception as error:  # CPU 런타임 torch에는 triton이 없다
     print("FLA_FAIL", type(error).__name__, error, flush=True)
 PY
     push_file "$WORK/smoke_imports.py" "$REMOTE/smoke_imports.py"
-    pip_out=$(printf 'import subprocess, sys\nr = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "%s/requirements-colab.txt"], capture_output=True, text=True)\nprint(r.stdout[-3000:], r.stderr[-6000:])\nprint("PIP_RC", r.returncode)\nc = subprocess.run([sys.executable, "%s/smoke_imports.py"], capture_output=True, text=True)\nprint(c.stdout)\nprint(c.stderr[-3000:])\n' "$REMOTE" "$REMOTE" | remote_py 3600 2>&1 || true)
+    pip_out=$(printf 'import subprocess, sys\nr = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "%s/requirements-colab.txt"], capture_output=True, text=True)\nprint(r.stdout[-3000:], r.stderr[-6000:])\nprint("PIP_RC", r.returncode)\nu = subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "torchao"], capture_output=True, text=True)\nprint("TORCHAO_REMOVED", u.returncode)\nc = subprocess.run([sys.executable, "%s/smoke_imports.py"], capture_output=True, text=True)\nprint(c.stdout)\nprint(c.stderr[-3000:])\n' "$REMOTE" "$REMOTE" | remote_py 3600 2>&1 || true)
     echo "$pip_out" >> "$LOG"
     grep -E "^(PIP_RC|IMPORTS_CORE_OK|FLA_OK|FLA_FAIL)" <<<"$pip_out" | sed 's/^/[smoke] /' >&2 || true
     if ! grep -q "^PIP_RC 0" <<<"$pip_out" || ! grep -q "^IMPORTS_CORE_OK " <<<"$pip_out"; then
@@ -247,6 +249,23 @@ PY
       say "[FAIL] GPU 런타임에서 flash-linear-attention import 실패 - $LOG 확인"
       exit 71
     fi
+  fi
+  if [[ "${SMOKE_TRAIN:-0}" == 1 ]]; then
+    # GPU 비용 전 리허설: Colab 이미지 패키지 조합에서 초소형 복합 모델로 train.py --trial을 CPU로 끝까지 돈다.
+    # 4bit·GPU 커널 경로는 빠지고, peft 적용·데이터·checkpoint·재개가 들어간다.
+    run_job tiny make_tiny_model.py --out tiny
+    if [[ "$job_rc" != 0 ]]; then
+      say "[FAIL] 초소형 모델 생성 실패(종료코드 $job_rc)"
+      exit 73
+    fi
+    run_job train train.py --data train.jsonl --out out --model tiny --device cpu --no-4bit --allow-fallback --trial \
+      --holdout 0 --max-seq-len "${SMOKE_MAX_SEQ:-12000}" --lm-head-chunk 256
+    if [[ "$job_rc" != 0 ]]; then
+      say "[FAIL] CPU 리허설 train.py 실패(종료코드 $job_rc) - $WORK/train.log 확인"
+      exit 73
+    fi
+    fetch_file "$REMOTE/out/report.json" "$WORK/report.json" >/dev/null
+    say "CPU 리허설 통과: $(python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(json.dumps(r["trial_checks"], ensure_ascii=False))' "$WORK/report.json")"
   fi
   say "업로드 완료(sha256 대조), 원격 작업 시험"
   run_job smoke smoke_job.py --probe
@@ -264,7 +283,7 @@ if [[ -n "${RESUME_FROM:-}" ]]; then
   push_file "$RESUME_FROM/adapter/adapter_config.json" "$REMOTE/out/checkpoint/adapter/adapter_config.json"
 fi
 say "업로드 완료(sha256 대조), 패키지 설치"
-pip_out=$(printf 'import subprocess, sys\nr = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "%s/requirements-colab.txt"], capture_output=True, text=True)\nprint(r.stdout[-3000:], r.stderr[-3000:])\nopen("%s/out/pip-freeze.txt", "w").write(subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True).stdout)\nprint("PIP_RC", r.returncode)\n' "$REMOTE" "$REMOTE" | remote_py 3600 2>&1 || true)
+pip_out=$(printf 'import subprocess, sys\nr = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "%s/requirements-colab.txt"], capture_output=True, text=True)\nprint(r.stdout[-3000:], r.stderr[-3000:])\nopen("%s/out/pip-freeze.txt", "w").write(subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True).stdout)\nprint("PIP_RC", r.returncode)\nu = subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "torchao"], capture_output=True, text=True)\nprint("TORCHAO_REMOVED", u.returncode)\n' "$REMOTE" "$REMOTE" | remote_py 3600 2>&1 || true)
 echo "$pip_out" >> "$LOG"
 if ! grep -q "^PIP_RC 0" <<<"$pip_out"; then
   say "[FAIL] 패키지 설치 실패"
