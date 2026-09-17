@@ -522,7 +522,7 @@ herdr pane 합의(claude·agy·opencode, 기록: 개발 트리 `tasks/pi-agent-l
 
 ### 14.3 contextWindow 단일 출처
 
-결함: `config.env` `LLAMA_CTX=65536`인데 템플릿 `contextWindow`가 32768로 고정 → Pi가 서버 창의 절반만 가정(stub 요청 `max_completion_tokens` 25539 실측), `contextWindow - 16384`에서 조기 압축. 수정: `render_models_json.py --ctx`(필수)가 alias 모델의 `contextWindow`를 `LLAMA_CTX`로 쓰고 `maxTokens`를 그 이하로 줄인다. `start-pi.bat`·`verify-offline.bat`은 `start-llama.bat`과 같은 기본값(32768)으로 넘긴다. `config.env.example` 기본값은 65536(KV f16 약 4.0 GiB — 전체 어텐션 16층만 KV를 가진다, §6 산술).
+결함: `config.env` `LLAMA_CTX=65536`인데 템플릿 `contextWindow`가 32768로 고정 → Pi가 서버 창의 절반만 가정(stub 요청 `max_completion_tokens` 25539 실측), `contextWindow - 16384`에서 조기 압축. 수정: `render_models_json.py --ctx`(필수)가 alias 모델의 `contextWindow`를 `LLAMA_CTX`로 쓰고 `maxTokens`를 그 이하로 줄인다. `start-pi.bat`·`verify-offline.bat`은 `start-llama.bat`과 같은 기본값(32768)으로 넘긴다. `config.env.example` 기본값은 65536(KV f16 약 4.0 GiB — 전체 어텐션 16층만 KV를 가진다, §6 산술)이었고, 같은 날 사용자 지정으로 **63488(62k, KV 약 3.9 GiB)**로 바꿨다. 세 배치의 키 미설정 기본값도 63488로 맞췄다. `src/llama-context.cpp:288`이 `n_ctx = GGML_PAD(n_ctx, 256)`로 올려 잡으므로 `config_parse.py`가 256의 배수가 아닌 `LLAMA_CTX`를 거부한다 — 배수가 아니면 서버 창만 커지고 Pi의 `contextWindow`는 그대로라 단일 출처 계약이 깨진다. 하이브리드 모델의 프롬프트 재사용은 서버가 이미 마지막 user 메시지와 프롬프트 끝 직전(4+ubatch, 4 토큰)에 체크포인트를 만들므로(`tools/server/server-context.cpp` 3549~3570) `--checkpoint-min-step`(기본 8192)은 건드리지 않았다.
 
 ### 14.4 llama-server 설정 (근거: b11010 소스)
 
@@ -533,6 +533,7 @@ herdr pane 합의(claude·agy·opencode, 기록: 개발 트리 `tasks/pi-agent-l
 | `LLAMA_CACHE_RAM_MIB` | 예시 32768 | `--cache-ram` 기본 8192. 슬롯 1개에서 서브에이전트 턴 전환 후 재prefill 회피 |
 | `LLAMA_SPEC_MTP` | 기본 0 | `--spec-type draft-mtp`("MTP heads from the main model"). 하이브리드는 `common_context_can_seq_rm`이 FULL → 체크포인트로 되감기, Pascal 이득 미측정 |
 | `-ngl 999`·`-ts`·`-fit off` | 유지 | `common/fit.cpp`: `-ngl`을 사용자가 주면 fit은 "n_gpu_layers already set by user"로 포기하며 매 기동 abort 줄을 남긴다 → `-fit off`로 명시. 자동 분배 대신 번들 동봉 `llama-fit-params.exe`로 한 번 계산해 `GPU_TENSOR_SPLIT`에 고정하는 절차를 README에 둔다 — 결정성 유지(§5). 스테이징 PC에서는 이 exe가 Device Guard에 차단됐다 |
+| `LLAMA_UBATCH` | 비움(512) | 현장 대응용. agy 리뷰가 `-ub 512`의 WDDM TDR(2초) 초과를 주장했으나 ubatch 전체 연산량(약 28.5 TFLOPs)을 단일 GPU 작업 시간으로 계산한 것이라 채택하지 않았다 — 실제로는 3장 층 분할·수천 개 커널로 나뉘고 Pascal은 compute preemption을 지원한다. 증상이 나오면 해시 대상 배치를 고치지 않고 256→128로 낮출 수 있게 키만 연다(리허설 §11-14) |
 | `LORA_FILE`·`LORA_SCALE` | 비움·1.0 | §14.5 |
 
 ### 14.5 LoRA — 장기 사용 간접학습
@@ -544,6 +545,24 @@ herdr pane 합의(claude·agy·opencode, 기록: 개발 트리 `tasks/pi-agent-l
 - **L2 데이터(구현, agy)** — `export-sessions.bat`(chcp 65001·PYTHONIOENCODING 고정 래퍼) → `tools\export_sessions.py`: 승인 목록(`lora\approved.txt`)의 세션만, leaf→root 활성 경로, OpenAI chat 형식, thinking 기본 제거, 이미지 대체, 비밀 마스킹, `stopReason` error/aborted 제외, 누락 승인 id는 exit 2, 샘플 0개는 exit 3. 입력 형식 근거는 0.85.1 `docs/session-format.md`와 실제 `pi.exe`가 쓴 세션 fixture.
 - **L3 학습 키트(미반입, 설계만)** — 확인된 사실: PyTorch 2.14.0 윈도우 cu126 휠의 `TORCH_CUDA_ARCH_LIST`에 6.1 포함(cu128+는 7.5부터, `.ci/pytorch/windows/build_env_setup.py`); transformers 5.17 `qwen3_5`는 fla/causal-conv1d 없이 torch fallback 보유; HF `Qwen/Qwen3.8-27B` BF16 18샤드(27.78B) 반입 필요(GGUF로는 학습 불가); llama.cpp 자체 finetune은 FP32·WIP라 대상 아님. 추정: 윈도우 PyTorch에는 NCCL이 없어 FSDP 대신 단일 프로세스 `device_map` 분산이 유일 경로. 반입 여부는 사용자 결정.
 - **L3 CPU 실측(2026-09-17, 초소형 qwen3_5)** — `Qwen3_5ForCausalLM`(4층: linear 3 + full 1, linear key/value 헤드 2/4) 랜덤 초기화. torch 2.14.0+cpu·transformers 5.17.0·peft 0.21.0·gguf(b11010 gguf-py): (1) causal-conv1d·fla 없이 torch fallback으로 LoRA 1스텝 역전파, 학습 파라미터 62개 전부 기울기 ≠ 0. (2) `convert_lora_to_gguf.py`: **`linear_attn.out_proj`에 LoRA를 걸면 `_reorder_v_heads`에서 `NotImplementedError`(키/값 헤드 수가 다른 V-head 재배열을 저랭크 텐서에 못 한다)** — 실제 27B도 16/48로 같은 조건이므로 학습 대상 모듈에서 `out_proj`를 뺀다. 빼면 full-attn q/k/v/o, MLP gate/up/down, linear-attn in_proj_qkv·z·a·b가 전부 변환됐다(텐서 56개). (3) 윈도우 b11010 CPU `llama-cli.exe`: `--lora` 적재 `loaded 56 tensors`, 출력이 기본 모델과 달라짐; `--lora-scaled adapter.gguf:1.0`(상대) 동일 출력; `--lora-scaled C:\...:1.0`(절대)은 `lora-scaled format: FNAME:SCALE`로 exit 1. (4) 번들 `start-llama.bat`(CPU 진단 모드, 같은 초소형 모델)로 기동 → `/lora-adapters`에 `lora\pi-tiny-probe.gguf` scale 0.5. 남은 차이: 실제 원본은 비전 포함 복합 모델(`model.language_model.*`, `mtp.*` 15텐서)이라 텍스트 층만 타깃하는 PEFT 설정과 복합 모델 기준 변환은 미검증. 초소형 모델은 head dim 16이라 `LLAMA_KV_TYPE=q8_0`(블록 32)이 거부됐다 — 실제 모델은 key_length 256이라 해당 없음. 기록: 개발 트리 `tasks/pi-agent-lora-upgrade/artifacts/l3-probe/`, `start-llama-probe/`.
+
+### 14.5-1 컨텍스트로 작업이 멈추지 않게 — settings.json 하한 (2026-09-17)
+
+사용자 요청("작업 중 컨텍스트 오류로 중단되지 않게")으로 Pi 0.85.1 dist와 llama.cpp b11010 서버의 실패 경로를 추적했다.
+
+| 실패 경로 | 근거 | 대응 |
+|---|---|---|
+| 압축 임계를 늦게 판정 | `core/compaction/compaction.js` `estimateContextTokens`: 마지막 응답 usage + 뒤 메시지 chars/4. 한글·CJK 도구 결과는 과소추정 | `compaction.reserveTokens` 하한 = 창의 3/8(256 단위 내림, 최소 8192), 상한 = 창의 절반 |
+| 초과·잘림 복구 1회 제한 | `core/agent-session.js` `_overflowRecoveryAttempted`: 두 번째는 "Context overflow recovery failed after one compact-and-retry attempt" | reserve 여유로 복구 진입 자체를 줄인다. `maxTokens`는 32768 유지 — 창 끝 잘림은 `output < maxTokens`여야 `isRecoverableLength`로 복구된다 |
+| 압축 뒤 남긴 이력이 재시도에서 다시 넘침 | `findCutPoint`는 메시지를 쪼개지 않고 `keepRecentTokens`를 chars/4로 잰다. 한글 도구 결과(한 개 최대 50KB, `core/tools/truncate.js`)는 실제 토큰이 약 3배일 수 있어, 압축 후 재시도도 넘치면 복구 1회 제한으로 멈춘다(agy 리뷰). Pi 기본값에서는 32768 창의 임계가 16384(reserve 16384)라 keep 20000이 이미 임계를 넘는다 | `keepRecentTokens` 상한 = (창 − reserve) ÷ 3 (최소 4096). 63488이면 13,226 — 3배 과소추정이어도 약 40k |
+| 긴 prefill 중 본문 유휴 | `tools/server/server-context.cpp:3422`: 스트리밍은 처리 시작에 헤더만, 첫 토큰까지 본문 없음. Pi `httpIdleTimeoutMs` 기본 300000 | 하한 1800000(0=끔은 존중) |
+| 대기열에서 헤더 전 SDK 타임아웃 | pi-ai openai-completions: `retry.provider.timeoutMs` 없으면 OpenAI SDK `DEFAULT_TIMEOUT=6e5`. `--parallel 1` | 하한 3600000 |
+
+llama-server가 창을 넘는 요청에 돌려주는 `request (N tokens) exceeds the available context size` 는 Pi `OVERFLOW_PATTERNS`의 `/exceeds the available context size/i`와 맞는다 — 초과 자체는 인식·복구된다(1회).
+
+`LLAMA_CTX`는 16384 이상만 받는다(reserve 하한 8192가 창 절반을 넘지 않게 — opencode 리뷰). 기본 요청 크기는 stub 실측 약 3.7k 토큰. 남는 한계(보장 아님): 도구 결과 하나가 과소추정으로 창을 넘기는 경우, 30분 넘는 무응답 prefill, 60분 넘는 대기열(백그라운드 위임 여러 개).
+
+구현: `tools\pi_settings.py`(하한만 올리고 다른 키 보존, 잘못된 타입·음수는 교체, JSON이 깨졌으면 쓰지 않고 실패), `start-pi.bat`이 패키지 동기화 뒤·모델 대기 전에 호출(실패 exit 10), `verify-offline.bat`은 실패를 `models.json 생성` 판정에 합친다. 윈도우 실측: 시드 settings.json에 하한 4개 적용 → 재실행 무변경 → `pi.exe` 0.85.1 stub 왕복 `[ok]`, stderr 경고 없음(개발 트리 `tasks/pi-agent-lora-upgrade/artifacts/context-safety-probe/`). prefill 속도(1080 Ti x3에서 초당 수십~100 토큰대로 추정)와 실제 타임아웃 여유는 리허설 §11-15.
 
 ### 14.6 기본 모델 Q6_K (2026-09-17 사용자 결정)
 
@@ -558,5 +577,5 @@ Q6_K GGUF 실측(gguf-py `GGUFReader`, 2026-09-17): `general.architecture = qwen
 | token_embd | 0.97 | 0.67 | 호스트 RAM(`-ngl`과 무관하게 입력층은 CPU) |
 | MTP blk 64 | 0.32 | 0.25 | `load_mtp`가 false면 적재 안 함(`src/llama-model.cpp` 기본값) — `LLAMA_SPEC_MTP=1`일 때만 |
 
-VRAM 산술(65536, KV f16): 층 18.61 + 출력 0.97 + KV 4.0(§14.3) + 선형 어텐션 상태 약 0.16(48층 × `time_step_rank` 48 × 128 × `state_size` 128 × 4B + conv) + mmproj 0.87 ≈ **24.6 GiB**, 여기에 연산 버퍼(출력 logits만 ub 512 × vocab 248,320 × 4B ≈ 0.47 GiB)와 장별 CUDA/WDDM 오버헤드, GPU0 디스플레이 점유가 더해진다. 3 × 11 GiB 안에 산술로는 들어가지만 장별 적재는 리허설 §11-9에서 확인한다. Q8_0(층+출력 약 25 GiB)은 KV를 더하면 넘친다. 디코드는 토큰당 읽는 가중치가 Q4_K_M의 약 1.33배라 20~25% 느릴 것으로 추정한다(미측정). OOM이면 `LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE`을 Q4_K_M으로.
+VRAM 산술(63488, KV f16): 층 18.61 + 출력 0.97 + KV 3.875(§14.3) + 선형 어텐션 상태 약 0.16(48층 × `time_step_rank` 48 × 128 × `state_size` 128 × 4B + conv) + mmproj 0.87 ≈ **24.5 GiB**(65536이면 24.6), 여기에 연산 버퍼(출력 logits만 ub 512 × vocab 248,320 × 4B ≈ 0.47 GiB)와 장별 CUDA/WDDM 오버헤드, GPU0 디스플레이 점유가 더해진다. 3 × 11 GiB 안에 산술로는 들어가지만 장별 적재는 리허설 §11-9에서 확인한다. Q8_0(층+출력 약 25 GiB)은 KV를 더하면 넘친다. 디코드는 토큰당 읽는 가중치가 Q4_K_M의 약 1.33배라 20~25% 느릴 것으로 추정한다(미측정). OOM이면 `LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE`을 Q4_K_M으로.
 

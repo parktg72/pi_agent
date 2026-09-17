@@ -300,3 +300,64 @@ def test_models_outside_the_manifest_cannot_be_selected(line):
 def test_shipped_models_can_be_selected(name):
     _, problems = config_parse.parse_text(f'set "MODEL_FILE={name}"\n')
     assert problems == []
+
+
+
+# --- 컨텍스트 63488(62k) - 사용자 지정, 2026-09-17 --------------------------------
+# llama.cpp b11010 src/llama-context.cpp:288 `cparams.n_ctx = GGML_PAD(cparams.n_ctx, 256)`.
+# 256의 배수가 아니면 서버는 올려 잡고 Pi의 contextWindow는 원래 값에 머문다 - 값의
+# 출처가 하나라는 계약이 조용히 깨진다. 그래서 config에서 배수를 강제한다.
+
+
+def test_the_example_and_every_script_default_agree_on_63488():
+    example = read("config.env.example")
+    assert 'set "LLAMA_CTX=63488"' in example
+    for script in ("start-llama.bat", "start-pi.bat", "verify-offline.bat"):
+        assert 'if not defined LLAMA_CTX set "LLAMA_CTX=63488"' in read(script), script
+
+
+@pytest.mark.parametrize("value", ["62000", "65535", "16385"])
+def test_a_context_the_server_would_pad_is_refused(value):
+    _, problems = config_parse.parse_text(f'set "LLAMA_CTX={value}"\n')
+    assert any("256" in problem for problem in problems), value
+
+
+@pytest.mark.parametrize("value", ["63488", "65536", "32768", "49152"])
+def test_a_context_on_the_256_grid_is_accepted(value):
+    _, problems = config_parse.parse_text(f'set "LLAMA_CTX={value}"\n')
+    assert problems == []
+
+
+
+def test_the_suggestion_for_a_tiny_context_never_offers_zero():
+    # opencode 리뷰: 1~255를 넣으면 대안으로 0을 안내했다. 0은 허용되지 않는 값이다.
+    # 16384 미만은 256 배수 검사 전에 최소값으로 거부된다(pi_settings reserve 하한 8192).
+    _, problems = config_parse.parse_text('set "LLAMA_CTX=100"\n')
+    assert any("16384" in problem for problem in problems)
+    assert not any("(0 " in problem or " 0 또는" in problem for problem in problems)
+
+
+
+# --- LLAMA_UBATCH: 현장 대응용 선택 키 --------------------------------------------
+# agy 리뷰는 -ub 512가 WDDM TDR(2초)을 넘긴다고 봤지만 근거가 ubatch 전체 시간과
+# 커널 단위 시간을 섞은 것이라 기본값은 바꾸지 않는다. 다만 폐쇄망에서 TDR 증상이
+# 나오면 해시 대상인 .bat을 고칠 수 없으므로 config.env로 낮출 길만 열어 둔다.
+
+
+def test_ubatch_is_passed_only_when_configured():
+    body = read("start-llama.bat")
+    assert 'if defined LLAMA_UBATCH set "UBATCH_ARG=-ub %LLAMA_UBATCH%"' in body
+    assert "%UBATCH_ARG%" in _server_command(body)
+    assert "-ub " not in _server_command(body).replace("%UBATCH_ARG%", "")
+
+
+@pytest.mark.parametrize("value,ok", [("256", True), ("128", True), ("512", True), ("0", False), ("300", False), ("4096", False)])
+def test_ubatch_takes_powers_of_two_up_to_2048(value, ok):
+    _, problems = config_parse.parse_text(f'set "LLAMA_UBATCH={value}"\n')
+    assert (problems == []) is ok, (value, problems)
+
+
+def test_config_example_leaves_ubatch_blank():
+    values, problems = config_parse.parse_text(read("config.env.example"))
+    assert problems == []
+    assert values["LLAMA_UBATCH"] == ""

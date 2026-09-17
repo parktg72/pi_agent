@@ -40,7 +40,7 @@ VRAM에서 맞는 분배를 계산해 출력한다(llama.cpp b11010 `tools/fit-p
 
 ```
 cd C:\pi_agent
-bin\llama-cuda\llama-fit-params.exe -m models\Qwen3.8-27B-Q6_K.gguf -c 65536 -sm layer
+bin\llama-cuda\llama-fit-params.exe -m models\Qwen3.8-27B-Q6_K.gguf -c 63488 -sm layer
 ```
 
 출력에 `-ngl` 이 전체 층 수보다 작게 나오면 모델이 VRAM에 다 안 들어간다는
@@ -77,7 +77,7 @@ Pi는 **실행한 폴더를 작업 프로젝트로 삼는다.** 번들 루트 �
 | 항목 | 무엇을 보나 |
 |---|---|
 | 번들 무결성 | `manifest-check.txt` — 매니페스트와 일치 |
-| models.json 생성 | `config.env` 의 포트·alias로 `home\agent\models.json` 이 만들어졌다 |
+| models.json 생성 | `config.env` 의 포트·alias·컨텍스트로 `home\agent\models.json` 이 만들어졌고, `settings.json` 에 컨텍스트 안전값(아래 절)이 들어갔다 |
 | 패키지 트리 동기화 | `pi-packages\` 전량이 `home\agent\` 에 경로·크기·해시까지 같게 놓였다 |
 | `/v1/models` 의 alias | `v1-models.json` 에 `MODEL_ALIAS` 가 있다 |
 | 확장/스킬 4종 | `pi-packages.txt` 에 4종이 나열된다 |
@@ -133,7 +133,7 @@ Qwen3.8 채팅 템플릿은 요청에 `reasoning_effort` 가 없으면 스스로
 `contextWindow` 는 `config.env` 의 `LLAMA_CTX` 에서 렌더링된다 — 2026-09-17
 이전에는 템플릿에 32768이 박혀 있어 서버를 65536으로 띄워도 Pi는 32768 창을
 가정했다. 32768이면 실사용 답변 예산이 대략 12,000 토큰이고, xhigh 로 도는 긴
-턴은 그 선을 넘길 수 있다. 기본값 65536이면 여유가 크게 늘지만 사고 토큰이
+턴은 그 선을 넘길 수 있다. 기본값 63488(62k)이면 압축은 47,104 초과에서 일어나 여유가 크게 늘지만 사고 토큰이
 출력 예산을 먹는 구조는 같다.
 
 그래서 `config.env` 에 `PI_THINKING` 이 있다.
@@ -218,6 +218,7 @@ Qwen3.8 채팅 템플릿은 요청에 `reasoning_effort` 가 없으면 스스로
 | 7 | `start-pi.bat` | 패키지 트리가 반입본과 다르다 |
 | 8 | `start-llama.bat` | `LLAMA_BACKEND=vulkan` 은 이 모델에서 금지다 |
 | 9 | `start-llama.bat` | `LLAMA_BACKEND=cpu` 에 `ALLOW_CPU_DIAGNOSTIC=1` 이 없다 |
+| 10 | `start-pi.bat` | `home\agent\settings.json` 이 JSON이 아니어서 컨텍스트 안전값을 넣지 못했다 — 고치거나 지우고 다시 실행 |
 
 `pi.exe` 자신의 종료 코드는 `start-pi.bat` 이 그대로 전달한다. 다만 그것을
 성공의 증거로 쓰지는 않는다 — `stopReason: error` 직후에도 0을 반환한 실측이
@@ -296,6 +297,10 @@ UTF-8로 정상 출력된다.
   22.4GB(Q6_K)를 시스템 RAM에 올리는 일이라 사고로 선택되면 안 된다 — RAM이나
   페이지파일이 모자라면 실패하는 대신 오래 스래싱한다.
 - `MSVCP140.dll` 관련 오류가 나면 `bin\llama-cuda` 안의 app-local DLL이 지워졌는지 확인한다.
+- 긴 프롬프트를 처리하다 화면이 잠깐 꺼지며 "디스플레이 드라이버 응답 중지 후 복구"
+  (이벤트 뷰어 `nvlddmkm`, TDR)가 뜨고 llama-server가 죽으면, `config.env` 에
+  `LLAMA_UBATCH=256`(그래도면 128)을 넣고 다시 띄운다. 기본값(비움 = 512)은 아직
+  이 PC에서 TDR이 관측된 적이 없어 바꾸지 않았다 — 리허설 §11-14.
 
 ## Pi 확장·스킬 (pi-packages)
 
@@ -398,6 +403,38 @@ bin\pi\pi.exe --offline --model %PI_MODEL_ID% --no-extensions --no-skills
 지우고 다시 실행하거나, 직접 고친 설정이 있으면 그 파일의 `packages` 배열만
 손으로 맞춘다.
 
+## 긴 작업이 컨텍스트 때문에 멈출 가능성 줄이기 (settings.json 안전값)
+
+Pi 0.85.1은 긴 작업을 이렇게 멈춘다(소스 추적, 2026-09-17):
+
+- 대화가 `contextWindow - reserveTokens` 를 넘으면 압축하는데, 새로 붙은 도구 결과는
+  **글자수/4** 로 추정한다. 한글 결과는 실제 토큰이 훨씬 많아 추정보다 늦게 압축된다.
+- 그래서 서버 창을 넘기거나 답이 잘리면 "압축 후 재시도"로 복구하지만 **한 실행에
+  한 번뿐**이다. 두 번째는 `Context overflow recovery failed...` 로 멈춘다.
+- 서버는 긴 이력을 처음부터 계산(prefill)하는 동안 첫 토큰 전까지 아무것도 보내지
+  않는다. 1080 Ti 3장에서 27B는 이 구간이 수 분 걸릴 수 있는데 Pi의 HTTP 유휴
+  타임아웃 기본값은 **5분**, 요청 타임아웃은 SDK 기본 **10분**이다.
+
+`start-pi.bat` 과 `verify-offline.bat` 은 실행할 때마다 `tools\pi_settings.py` 로
+`home\agent\settings.json` 에 다음 **하한**을 맞춘다. 더 큰 값, 다른 키, 운영자가
+`/settings` 로 바꾼 것은 그대로 두고, 바꾼 것이 있으면 `[info]` 로 적는다.
+
+| 키 | 값 (LLAMA_CTX 63488 기준) | Pi 기본값 |
+|---|---|---|
+| `compaction.enabled` | `true` | `true` |
+| `compaction.reserveTokens` | 23808 (창의 3/8, 상한은 창의 절반) — 압축은 39,680 초과에서 | 16384 |
+| `compaction.keepRecentTokens` | 13,226 이하(창에서 reserve를 뺀 값의 1/3) — 압축 뒤 남는 한글 이력이 실제로는 약 3배여도 재시도가 창 안에 들어가게 | 20000 |
+| `httpIdleTimeoutMs` | 1800000 (30분, `0` 으로 끈 것은 존중) | 300000 |
+| `retry.provider.timeoutMs` | 3600000 (60분) | SDK 10분 |
+
+이것은 보장이 아니라 위험을 줄이는 값이다. 남는 한계:
+
+- 도구 결과 하나는 Pi가 50KB·2000줄로 자르지만, 한글이면 그 하나가 실제로 1만 토큰을
+  넘을 수 있다. 큰 한글 문서는 `read` 도구의 offset/limit로 나눠 읽게 한다.
+- 30분 넘게 첫 토큰이 안 나오는 prefill, 백그라운드 서브에이전트를 여러 개 겹쳐
+  60분 넘게 대기열에 선 요청은 여전히 타임아웃된다 — 위임은 하나씩 한다.
+- 그래도 멈추면 `/compact` 로 수동 압축한 뒤 "이어서 진행해"라고 요청한다.
+
 ## 설정 최적화 (GTX 1080 Ti ×3, RAM 128GB)
 
 `config.env.example` 에 2026-09-17 추가된 키들이다. 근거는 llama.cpp b11010
@@ -407,15 +444,16 @@ bin\pi\pi.exe --offline --model %PI_MODEL_ID% --no-extensions --no-skills
 | 키 | `config.env.example` 값 (키가 비었을 때) | 무엇을 하나 |
 |---|---|---|
 | (고정) `-fa auto` | 항상 | flash attention. Pascal은 텐서코어가 없어 tile/vec 커널로 돈다(`ggml-cuda/fattn.cu`). `auto` 는 장치에서 돌 수 있는지 먼저 시험하고 기동 로그에 `flash_attn enabled` 또는 `not supported, set to disabled` 를 남긴다 — `on` 으로 강제하면 그 시험을 건너뛰어 안 될 때 연산이 CPU로 간다. 기동 로그에서 이 줄을 확인한다 |
-| `LLAMA_CTX` | 65536 (32768) | 서버 컨텍스트이자 Pi의 `contextWindow`. qwen35는 전체 어텐션 16층만 KV를 가져 65536에서 KV 약 4.0 GiB(f16) |
+| `LLAMA_CTX` | 63488 (63488) | 서버 컨텍스트이자 Pi의 `contextWindow`. qwen35는 전체 어텐션 16층만 KV를 가져 63488에서 KV 약 3.9 GiB(f16). **256의 배수만 받는다** — llama-server가 256 단위로 올려 잡아서 배수가 아니면 Pi의 창과 어긋난다(`config.env` 검사가 거부) |
 | `LLAMA_KV_TYPE` | `f16` (`f16`) | `q8_0` 이면 저장되는 KV가 절반. 다만 Pascal의 prefill 커널(tile)은 F16 임시 사본으로 계산하므로 최대 사용량 절감은 그보다 작다. Q6_K(20.9 GiB)나 더 긴 컨텍스트의 리허설 후보이지 보장된 해결책이 아니다 |
 | `LLAMA_CACHE_RAM_MIB` | 32768 (llama.cpp 기본 8192) | 프롬프트 캐시를 시스템 RAM에 둔다. 슬롯이 하나라 서브에이전트 턴이 본 세션의 KV를 밀어내는데, 이 캐시가 있으면 다음 턴에 전체 이력을 다시 prefill하지 않는다 — Pascal에서 가장 느린 단계다 |
+| `LLAMA_UBATCH` | 비움 (llama.cpp 기본 512) | prefill 물리 배치. TDR(디스플레이 드라이버 재시작) 증상이 있을 때만 256→128로 낮춘다 |
 | `LLAMA_SPEC_MTP` | `0` (꺼짐) | 모델 내장 MTP 층으로 추측 디코딩(`--spec-type draft-mtp`). 하이브리드 모델은 되감기에 체크포인트를 쓰므로 Pascal에서 이득이 있는지 모른다 — 리허설 A/B 후 켠다 |
 | `LORA_FILE` / `LORA_SCALE` | 비움 / 1.0 (어댑터 없음 / 1.0) | 아래 "LoRA" 절 |
 
 양자화 선택 (2026-09-17 결정): **기본은 Q6_K**, 백업은 Q4_K_M. 둘 다 반입한다.
 Q6_K는 GPU에 약 19.6 GiB(입력 임베딩 0.97 GiB는 RAM에 남는다)를 올리고, mmproj
-0.87 GiB와 65536 컨텍스트 KV 4.0 GiB를 더하면 연산 버퍼 전 약 24.6 GiB다 — 3장
+0.87 GiB와 63488 컨텍스트 KV 3.9 GiB를 더하면 연산 버퍼 전 약 24.5 GiB다 — 3장
 합계 안에는 들어가지만 장별로 들어가는지는 `GPU_TENSOR_SPLIT` 이 정한다. 토큰마다
 읽는 가중치가 Q4_K_M의 약 1.33배라 생성 속도는 20~25% 느릴 것으로 본다(추정 —
 아직 재지 않았다). 안 들어가거나 너무 느리면 순서대로:

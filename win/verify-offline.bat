@@ -82,6 +82,11 @@ rem are already duplicated the same way in both files - there is no sharing
 rem mechanism between .bat files).
 call :sync_packages
 set "SYNC_RC=!errorlevel!"
+rem Same context safety floors start-pi.bat applies (tools\pi_settings.py), so
+rem the round trip below runs with the settings the operator will run with. A
+rem failure counts against the Pi configuration verdict with models.json.
+%PYTHON_CMD% "%ROOT%tools\pi_settings.py" --settings "%PI_CODING_AGENT_DIR%\settings.json" --ctx "%LLAMA_CTX%"
+if errorlevel 1 set "RENDER_RC=1"
 "%ROOT%bin\pi\pi.exe" list > "%EV%\pi-packages.txt" 2>&1
 set "PI_LIST_RC=!errorlevel!"
 type "%EV%\pi-packages.txt"
@@ -133,9 +138,10 @@ if not exist "%ROOT%models.json" (
 )
 if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"
 rem contextWindow in the rendered models.json comes from LLAMA_CTX, the same
-rem value start-llama.bat gives the server, with the same default. A template
-rem that pinned 32768 once sat under a server started with 65536.
-if not defined LLAMA_CTX set "LLAMA_CTX=32768"
+rem value start-llama.bat gives the server, with the same default (63488, the
+rem config.env.example value). A template that pinned 32768 once sat under a
+rem server started with 65536.
+if not defined LLAMA_CTX set "LLAMA_CTX=63488"
 %BOOTSTRAP_PY% "%ROOT%tools\render_models_json.py" --template "%ROOT%models.json" --out "%PI_CODING_AGENT_DIR%\models.json" --port "%LLAMA_PORT%" --alias "%MODEL_ALIAS%" --model-id "%PI_MODEL_ID%" --ctx "%LLAMA_CTX%"
 if errorlevel 1 (
   echo [FAIL] could not render models.json into %PI_CODING_AGENT_DIR%
