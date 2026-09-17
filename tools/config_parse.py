@@ -33,6 +33,11 @@ import re
 import sys
 from pathlib import Path
 
+# 번들 내장 임베디드 파이썬은 스크립트 디렉터리를 sys.path에 넣지 않는다
+# (render_models_json.py와 같은 관용구).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from manifest import EXCLUDED_PATHS
+
 # cmd.exe가 값을 코드로 해석하게 만드는 문자들. 큰따옴표는 `set "K=V"`의
 # 인용 자체를 깨뜨리므로 같이 막는다.
 FORBIDDEN_VALUE_CHARS = '&|<>^%!"'
@@ -88,6 +93,12 @@ def _check_model_id(value: str) -> str | None:
 def _check_filename(value: str) -> str | None:
     if ".." in value:
         return "상위 디렉터리 참조(..)는 쓸 수 없다"
+    # 매니페스트가 해시하지 않는 모델(스테이징 PC에만 있는 것)은 고를 수 없다.
+    # 반입 매체에 함께 복사돼도 전송 손상을 검사받지 않은 파일이다(2026-09-17 agy 리뷰).
+    relative = "models/" + value.replace("\\", "/").lstrip("/")
+    for excluded in EXCLUDED_PATHS:
+        if relative == excluded or relative.startswith(excluded + "/"):
+            return f"{excluded}는 반입 대상이 아니라 매니페스트가 검사하지 않는다 - 반입 모델(Q6_K·Q4_K_M)을 쓴다"
     return None
 
 
@@ -100,6 +111,41 @@ def _check_thinking(value: str) -> str | None:
 def _check_tensor_split(value: str) -> str | None:
     if not re.fullmatch(r"[0-9]+(\.[0-9]+)?(,[0-9]+(\.[0-9]+)?)*", value):
         return "쉼표로 구분한 숫자여야 한다(예: 1,1.2,1.2)"
+    return None
+
+
+# KV 캐시 타입. q8_0은 VRAM이 빠듯한 양자화(Q6_K 등)에서 쓰고, 그보다 낮은
+# 비트는 품질 손실 대비 이득이 작아 받지 않는다. 양자화 KV는 flash-attn을
+# 요구하는데 start-llama.bat이 -fa on을 고정한다(b11010 fattn.cu: Pascal은
+# tile/vec 커널로 동작).
+KV_TYPES = ("f16", "q8_0")
+
+
+def _check_kv_type(value: str) -> str | None:
+    if value not in KV_TYPES:
+        return f"{' | '.join(KV_TYPES)} 중 하나여야 한다"
+    return None
+
+
+def _check_lora_file(value: str) -> str | None:
+    # llama-server --lora-scaled는 FNAME:SCALE을 ':'로, 여러 개를 ','로 나눈다
+    # (b11010 common/arg.cpp). 그 둘이 이름에 있으면 기동이 실패하거나 다른
+    # 파일을 연다. lora\ 바로 아래의 파일 이름만 받는다.
+    # 괄호도 막는다: start-llama.bat의 if ( ... ) 블록 안 echo에서 값이 펼쳐질 때
+    # ')'가 블록을 조기에 닫는다(2026-09-17 opencode 리뷰). 그래서 금지 목록이 아니라
+    # 허용 문자 집합으로 좁힌다.
+    if ".." in value or not re.fullmatch(r"[A-Za-z0-9._-]+", value):
+        return "lora\\ 바로 아래의 파일 이름만 쓴다(영문·숫자·._- 만, 경로 구분자·:·,·괄호 불가)"
+    if not value.lower().endswith(".gguf"):
+        return "GGUF 어댑터(.gguf)여야 한다 - PEFT 원본은 convert_lora_to_gguf.py로 변환한다"
+    return None
+
+
+def _check_lora_scale(value: str) -> str | None:
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)?", value):
+        return "0보다 큰 숫자여야 한다(예: 1.0)"
+    if not (0 < float(value) <= 2):
+        return "0 초과 2 이하여야 한다 - 학습 배율(1.0)에서 크게 벗어난 값은 오타일 가능성이 높다"
     return None
 
 
@@ -126,6 +172,14 @@ ALLOWED_KEYS: dict[str, object] = {
     # 16.8GB 모델을 CPU로 올리는 것은 사고로 선택될 일이 아니다. 진단 목적일
     # 때만 1로 둔다(start-llama.bat이 이 값을 요구한다).
     "ALLOW_CPU_DIAGNOSTIC": _check_flag,
+    # 2026-09-17 설정 최적화(1080 Ti x3, RAM 128GB). 근거: tasks 합의 문서와
+    # win\\config.env.example의 각 항목 설명.
+    "LLAMA_KV_TYPE": _check_kv_type,
+    "LLAMA_CACHE_RAM_MIB": _check_positive_int,
+    "LLAMA_SPEC_MTP": _check_flag,
+    # 대상 PC에서 학습한 LoRA 어댑터. 비우면 기본 모델만 뜬다(롤백 = 비우기).
+    "LORA_FILE": _check_lora_file,
+    "LORA_SCALE": _check_lora_scale,
 }
 
 

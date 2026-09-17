@@ -11,9 +11,9 @@ from pathlib import Path
 
 from manifest import sha256_of
 
-_LLAMA_TAG = "b10470"
+_LLAMA_TAG = "b11010"
 _LLAMA_BASE = f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_TAG}/"
-_PI_BASE = "https://github.com/earendil-works/pi/releases/download/v0.84.2/"
+_PI_BASE = "https://github.com/earendil-works/pi/releases/download/v0.85.1/"
 # 3.12 계열 중 윈도우 임베디드 배포가 나온 마지막 패치. 3.12.11부터는
 # 보안 수정만 소스로 나오고 embed-amd64.zip 자산이 없다(2026-08-18 실측: 404).
 _PYTHON_VERSION = "3.12.10"
@@ -36,13 +36,13 @@ CATALOG: dict[str, Asset] = {
     "pi": Asset(
         name="pi-windows-x64.zip",
         url=_PI_BASE + "pi-windows-x64.zip",
-        sha256="741fc1ae1afecb573ac2888e011188ff446b3940f4aabe1583f60bf55be8a3d0",
-        bytes=45470989,
+        sha256="002fa95b90d521245b9985d8f168caebc237ad56e7e30b319807dee1b2e17e1c",
+        bytes=45009021,
     ),
     "llama-cuda": _llama(
         f"llama-{_LLAMA_TAG}-bin-win-cuda-12.4-x64.zip",
-        "e6f3fa9790ab7684ded44ade774dc94742ddb99e4b0abaf1603dab4f3d0803d3",
-        250799028,
+        "f66167619958a9c94a3ff43f0f847a83399716f40d70c2c7c9ed097d0a11c280",
+        254193004,
     ),
     "llama-cudart": _llama(
         "cudart-llama-bin-win-cuda-12.4-x64.zip",
@@ -51,13 +51,13 @@ CATALOG: dict[str, Asset] = {
     ),
     "llama-vulkan": _llama(
         f"llama-{_LLAMA_TAG}-bin-win-vulkan-x64.zip",
-        "2e89637b30e0e2f90d4ed486118e8642f60625b1dbebb9ba3a30bc4100306fc9",
-        34815594,
+        "6fb7020fe34c2989b924f88b55e716f2d29ccd7934a99fc3b89f7783f361d8cd",
+        31710621,
     ),
     "llama-cpu": _llama(
         f"llama-{_LLAMA_TAG}-bin-win-cpu-x64.zip",
-        "a31f1f317813ae7e044be183e0a20b90e78a80c0e97ee11a8b32a014eccd5043",
-        18470203,
+        "3011251607251eca68ae67e35512364d9943d862ff598599ff9a4888c1753008",
+        18438370,
     ),
     # 대상 PC에 Python 3.12가 설치돼 있다는 것은 사용자가 확인해 주었다. 그래도
     # 관리자 권한도 네트워크도 없는 곳에서 파이썬이 없거나 Microsoft Store의

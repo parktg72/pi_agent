@@ -33,6 +33,10 @@ EXCLUDED_ROOTS = (
     # 생기므로 스테이징 시점에는 없고, 만들어지는 순간 수천 개 파일이
     # unexpected:로 쏟아져 무결성 검사가 영구히 빨간불이 된다.
     ".venv",
+    # 대상 PC에서 학습해 넣는 LoRA 어댑터(config.env LORA_FILE). 반입물이 아니라
+    # 현장 생성물이고 주기적으로 바뀐다. 해시하면 어댑터를 넣은 운영자에게
+    # unexpected:가 확정적으로 뜬다 - .venv와 같은 이유다.
+    "lora",
     # 오케스트레이션 구성(멀티에이전트 스캐폴드) — 개발 트리 전용이다. 반입
     # 번들에 실리면 verify-bundle이 unexpected:로 쏟아내고, README가 단언하는
     # "지적된 것은 진짜 전송 손상"이 거짓이 된다.
@@ -69,6 +73,16 @@ EXCLUDED_FILES = (
     "SESSION.md",
     ".mcp.json",
 )
+# 스테이징 PC에 있지만 반입하지 않는 것. 번들 루트 기준의 정확한 경로로만
+# 뺀다(파일 또는 디렉터리) - 이름 비교로 빼면 payload 안의 같은 이름까지 해시
+# 범위 밖으로 샌다. 2026-09-17 사용자 결정: 반입 모델은 Q6_K(기본)·Q4_K_M(백업)·
+# mmproj뿐이다. 아래 셋은 파일을 옮기지 않고 해시에서만 뺀다. 반입 매체로
+# 복사할 때 함께 빼도 된다.
+EXCLUDED_PATHS = (
+    "models/Qwen3.8-27B-Q8_0.gguf",
+    "models/Qwen3.8-27B-Uncensored-GGUF",
+    "models/DeepSeek-R1-0528-Qwen3-8B-GGUF",
+)
 # 파이썬 바이트코드는 대상 PC에서 verify_bundle.py가 import되는 순간 다시
 # 쓰인다. 즉 검사 대상이 검사 도중 바뀐다. 깊이와 무관하게 제외한다.
 EXCLUDED_DIR_NAMES = ("__pycache__",)
@@ -93,14 +107,19 @@ def iter_immutable_files(root: Path) -> Iterator[tuple[str, Path]]:
         dirnames[:] = [
             name
             for name in sorted(dirnames)
-            if name not in EXCLUDED_DIR_NAMES and not (at_top and name in EXCLUDED_ROOTS)
+            if name not in EXCLUDED_DIR_NAMES
+            and not (at_top and name in EXCLUDED_ROOTS)
+            and (relative_dir / name).as_posix() not in EXCLUDED_PATHS
         ]
         for name in sorted(filenames):
             if at_top and name in EXCLUDED_FILES:
                 continue
             if name.endswith(EXCLUDED_SUFFIXES):
                 continue
-            yield (relative_dir / name).as_posix(), Path(dirpath) / name
+            relative = (relative_dir / name).as_posix()
+            if relative in EXCLUDED_PATHS:
+                continue
+            yield relative, Path(dirpath) / name
 
 
 def build(root: Path, staged_at: str, target: str) -> dict:
@@ -118,6 +137,7 @@ def build(root: Path, staged_at: str, target: str) -> dict:
         "excludedFiles": list(EXCLUDED_FILES),
         "excludedDirNames": list(EXCLUDED_DIR_NAMES),
         "excludedSuffixes": list(EXCLUDED_SUFFIXES),
+        "excludedPaths": list(EXCLUDED_PATHS),
         "totals": {"files": len(files), "bytes": total_bytes},
         "files": files,
     }

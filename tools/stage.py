@@ -108,15 +108,31 @@ def _verify(root: Path) -> int:
 
 
 def _model_check(root: Path) -> int:
-    models = sorted((root / "models").glob("*.gguf"))
+    # 반입하지 않는 모델(manifest.EXCLUDED_PATHS)은 검사하지 않는다 - 번들에 없는 것이다.
+    models = sorted(
+        path for path in (root / "models").glob("*.gguf")
+        if path.relative_to(root).as_posix() not in manifest.EXCLUDED_PATHS
+    )
     if not models:
         print("[FAIL] models/ 에 GGUF가 없다", file=sys.stderr)
         return 1
     problems: list[str] = []
+    checked = 0
     for model in models:
+        # 비전 프로젝터(mmproj, general.architecture=clip)는 채팅 모델이 아니라
+        # 템플릿이 원래 없다. 2026-09-17 이것이 FAIL로 찍혀 오탐이었다. 면제는
+        # mmproj 이름에만 준다 - 채팅 모델 이름으로 놓인 프로젝터는 그대로 검사해
+        # 실패시킨다(opencode 리뷰).
+        architecture = gguf.read_metadata(model, ("general.architecture",)).get("general.architecture")
+        if architecture == "clip" and model.name.lower().startswith("mmproj"):
+            print(f"[skip] {model.name} - 비전 프로젝터(clip), 채팅 템플릿 검사 대상 아님")
+            continue
+        checked += 1
         found = gguf.check_tool_capable(model)
         problems += found
         print(f"[{'FAIL' if found else 'ok'}] {model.name}")
+    if checked == 0:
+        problems.append("검사한 채팅 모델이 하나도 없다 - models/에 프로젝터만 남았다")
     for problem in problems:
         print(f"[FAIL] {problem}", file=sys.stderr)
     return 1 if problems else 0

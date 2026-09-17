@@ -16,9 +16,9 @@ PROBE = "NARWHAL-7Q2X"
 ALIAS = "qwen3.8-27b"
 PACKAGES = [
     "git:github.com/obra/superpowers@v6.3.0",
-    "npm:pi-subagents@0.50.0",
-    "npm:@juicesharp/rpiv-todo@2.6.1",
-    "npm:@juicesharp/rpiv-ask-user-question@2.6.1",
+    "npm:pi-subagents@0.68.0",
+    "npm:@juicesharp/rpiv-todo@2.10.1",
+    "npm:@juicesharp/rpiv-ask-user-question@2.10.1",
 ]
 ROUNDTRIP = """{"type":"tool_execution_start","toolCall":{"name":"read"}}
 {"type":"tool_execution_end","isError":false,"result":"NARWHAL-7Q2X"}
@@ -37,9 +37,9 @@ def evidence(tmp_path: Path) -> Path:
     (directory / "pi-packages.txt").write_text(
         "User packages:\n"
         "  github.com/obra/superpowers 6.3.0\n"
-        "  pi-subagents 0.50.0\n"
-        "  @juicesharp/rpiv-todo 2.6.1\n"
-        "  @juicesharp/rpiv-ask-user-question 2.6.1\n",
+        "  pi-subagents 0.68.0\n"
+        "  @juicesharp/rpiv-todo 2.10.1\n"
+        "  @juicesharp/rpiv-ask-user-question 2.10.1\n",
         encoding="utf-8",
     )
     (directory / "pi-tool-roundtrip.json").write_text(ROUNDTRIP, encoding="utf-8")
@@ -115,7 +115,7 @@ def test_a_powershell_error_instead_of_json_fails(evidence):
 def test_a_missing_extension_fails(evidence):
     text = (evidence / "pi-packages.txt").read_text(encoding="utf-8")
     (evidence / "pi-packages.txt").write_text(
-        text.replace("  @juicesharp/rpiv-todo 2.6.1\n", ""), encoding="utf-8"
+        text.replace("  @juicesharp/rpiv-todo 2.10.1\n", ""), encoding="utf-8"
     )
     assert failures(run(evidence))
 

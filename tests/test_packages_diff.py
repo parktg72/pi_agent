@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import packages_diff
 
-BUNDLED = ["git:github.com/obra/superpowers@v6.3.0", "npm:pi-subagents@0.50.0"]
+BUNDLED = ["git:github.com/obra/superpowers@v6.3.0", "npm:pi-subagents@0.68.0"]
 
 
 def test_identical_lists_say_nothing():
@@ -15,7 +15,7 @@ def test_identical_lists_say_nothing():
 def test_a_package_the_new_bundle_added_is_named_as_unregistered():
     lines = packages_diff.compare(BUNDLED, ["git:github.com/obra/superpowers@v6.3.0"])
     assert lines, "v2 번들이 추가한 패키지가 조용히 미등록되면 안 된다"
-    assert any("npm:pi-subagents@0.50.0" in line for line in lines)
+    assert any("npm:pi-subagents@0.68.0" in line for line in lines)
     assert any("미등록" in line for line in lines)
 
 
@@ -27,7 +27,7 @@ def test_a_package_only_the_target_has_is_named_too():
 
 def test_a_version_bump_counts_as_a_difference():
     lines = packages_diff.compare(BUNDLED, ["git:github.com/obra/superpowers@v6.3.0", "npm:pi-subagents@0.49.0"])
-    assert any("0.50.0" in line for line in lines)
+    assert any("0.68.0" in line for line in lines)
     assert any("0.49.0" in line for line in lines)
 
 
@@ -53,7 +53,7 @@ def test_main_never_blocks_startup(tmp_path, capsys):
 
     assert exit_code == 0, "대조 결과가 Pi 기동을 막으면 안 된다"
     assert "[warn]" in output
-    assert "npm:pi-subagents@0.50.0" in output
+    assert "npm:pi-subagents@0.68.0" in output
 
 
 def test_main_is_silent_when_the_lists_agree(tmp_path, capsys):
