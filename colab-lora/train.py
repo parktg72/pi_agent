@@ -28,6 +28,9 @@ import sys
 import time
 from pathlib import Path
 
+# 긴 시퀀스와 길이 사다리의 OOM 복구 뒤 단편화를 줄인다(CUDA 초기화 전에 정해야 한다).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
@@ -151,6 +154,9 @@ def load_model(args, dtype):
     bad = [name for name in names if "out_proj" in name or "visual" in name or "mtp" in name]
     if not names or bad:
         raise SystemExit(f"[FAIL] LoRA 대상이 합의와 다르다: {len(names)}개, 금지 {bad[:3]}")
+    # from_pretrained는 eval 모드로 돌려준다. eval이면 그래디언트 체크포인팅이 꺼져 64층 활성을 전부 잡는다 -
+    # A100 40GB에서 3.5k 토큰 첫 스텝이 OOM(2026-09-18 실측). 학습 전에 반드시 train 모드로 둔다.
+    model.train()
     return model
 
 
@@ -296,7 +302,12 @@ def main(argv=None) -> int:
     model = load_model(args, dtype)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     modules = module_report(model)
-    log("model", trainable_params=trainable, peak_gib=peak_memory_gib(), modules=modules)
+    checkpointing = any(getattr(m, "gradient_checkpointing", False) for m in model.modules())
+    log("model", trainable_params=trainable, peak_gib=peak_memory_gib(), training=model.training,
+        gradient_checkpointing=checkpointing, modules=modules)
+    if not (model.training and checkpointing):
+        log("fail", reason="학습 모드·그래디언트 체크포인팅이 켜지지 않았다", training=model.training, gradient_checkpointing=checkpointing)
+        return 4
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0)
 
@@ -306,6 +317,8 @@ def main(argv=None) -> int:
     def do_step(indices: list[int], total: int) -> dict:
         """한 optimizer 스텝. 실패면 {"fail": 이유}. OOM은 호출자가 잡는다."""
         tick = time.time()
+        if not model.training:  # evaluate()가 eval로 바꾼 뒤 되돌리지 못한 경우 등 - 체크포인팅 없이 돌면 OOM
+            return {"fail": "모델이 학습 모드가 아니다(그래디언트 체크포인팅 꺼짐)"}
         batch = [train_seqs[i] for i in indices]
         step_targets = sum(s.target_tokens for s in batch)
         probe_before = model.get_parameter(probe_name).detach().clone()
