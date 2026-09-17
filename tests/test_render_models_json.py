@@ -68,6 +68,7 @@ def test_main_writes_the_file_and_returns_zero(tmp_path):
             "--port", "18080",
             "--alias", "qwen3.8-27b",
             "--model-id", "local/qwen3.8-27b",
+            "--ctx", "32768",
         ]
     )
     assert code == 0
@@ -87,6 +88,7 @@ def test_main_refuses_a_mismatched_model_id_and_writes_nothing(tmp_path):
             "--port", "8080",
             "--alias", "qwen3.8-27b",
             "--model-id", "local/typo",
+            "--ctx", "32768",
         ]
     )
     assert code == 1
@@ -101,6 +103,7 @@ def test_main_refuses_a_missing_template(tmp_path):
                 "--out", str(tmp_path / "out.json"),
                 "--port", "8080",
                 "--alias", "a",
+                "--ctx", "32768",
             ]
         )
         == 1

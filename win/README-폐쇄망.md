@@ -33,6 +33,25 @@
 비워두면 llama.cpp 기본 분배를 쓴다. `1,1,1` 로 고정하지 않는다 — 디스플레이가
 붙은 GPU의 실여유가 다른 두 장보다 적다.
 
+비율을 손으로 정하기 어렵다면 같은 폴더의 `llama-fit-params.exe` 가 현재 여유
+VRAM에서 맞는 분배를 계산해 출력한다(llama.cpp b11010 `tools/fit-params`).
+`start-llama.bat` 과 같은 모델·컨텍스트로 한 번 돌리고, 출력된 `-ts` 값을
+`GPU_TENSOR_SPLIT` 에 옮긴다.
+
+```
+cd C:\pi_agent
+bin\llama-cuda\llama-fit-params.exe -m models\Qwen3.8-27B-Q6_K.gguf -c 65536 -sm layer
+```
+
+출력에 `-ngl` 이 전체 층 수보다 작게 나오면 모델이 VRAM에 다 안 들어간다는
+뜻이다 — 그대로 쓰지 말고 `LLAMA_CTX` 를 줄이거나 `LLAMA_KV_TYPE=q8_0` 을
+먼저 검토한다(아래 "설정 최적화"). `start-llama.bat` 은 `-ngl 999` 로 전 층을
+GPU에 강제하므로, 안 들어가면 느려지는 대신 기동이 실패한다.
+
+`llama-fit-params.exe` 가 "Device Guard 정책에 의해 차단" 으로 안 뜰 수 있다 —
+2026-09-17 스테이징 PC에서 실제로 그랬다(같은 폴더의 `llama-server.exe` 는
+실행됐다). 그때는 위의 `nvidia-smi` 비율 방식으로 채운다.
+
 **3 — 기본이 격리 설치다.** 인자 없이 실행하면 `C:\pi_agent\.venv` 에 깔린다.
 `--user` 는 그 계정의 **모든** Python 3.12 에 영향을 준다(아래 "왜 격리가
 기본인가" 참고). 코딩 에이전트만 쓸 거면 이 단계는 건너뛰어도 된다.
@@ -109,9 +128,13 @@ Qwen3.8 채팅 템플릿은 요청에 `reasoning_effort` 가 없으면 스스로
 {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
 ```
 
-사고 토큰은 답변과 같은 출력 예산을 쓴다. `-c 32768` 에 자동 압축이 16,384
-초과에서 발동하므로 실사용 답변 예산은 대략 12,000 토큰이고, xhigh 로 도는
-긴 턴은 그 선을 넘길 수 있다.
+사고 토큰은 답변과 같은 출력 예산을 쓴다. Pi는 대화가 `contextWindow - 16384`
+를 넘으면 자동 압축한다(`bin\pi\docs\compaction.md` 의 `reserveTokens`).
+`contextWindow` 는 `config.env` 의 `LLAMA_CTX` 에서 렌더링된다 — 2026-09-17
+이전에는 템플릿에 32768이 박혀 있어 서버를 65536으로 띄워도 Pi는 32768 창을
+가정했다. 32768이면 실사용 답변 예산이 대략 12,000 토큰이고, xhigh 로 도는 긴
+턴은 그 선을 넘길 수 있다. 기본값 65536이면 여유가 크게 늘지만 사고 토큰이
+출력 예산을 먹는 구조는 같다.
 
 그래서 `config.env` 에 `PI_THINKING` 이 있다.
 
@@ -270,7 +293,7 @@ UTF-8로 정상 출력된다.
   이 모델에는 쓰지 않는다. `cpu`로 바꿔 원인을 좁힌다 — 느리지만 정확하다.
   30B 모델 실사용 속도가 나오지 않으므로 CPU는 진단용이고, 그래서
   `config.env` 에 `ALLOW_CPU_DIAGNOSTIC=1` 을 명시해야만 뜬다(없으면 exit 9).
-  16.8GB를 시스템 RAM에 올리는 일이라 사고로 선택되면 안 된다 — RAM이나
+  22.4GB(Q6_K)를 시스템 RAM에 올리는 일이라 사고로 선택되면 안 된다 — RAM이나
   페이지파일이 모자라면 실패하는 대신 오래 스래싱한다.
 - `MSVCP140.dll` 관련 오류가 나면 `bin\llama-cuda` 안의 app-local DLL이 지워졌는지 확인한다.
 
@@ -290,27 +313,58 @@ npm/git이 전혀 필요 없다 — npm/git은 오직 **설치할 때만** 쓰�
 | 패키지 | 하는 일 |
 |---|---|
 | `git:github.com/obra/superpowers@v6.3.0` | 브레인스토밍·계획 작성·TDD·체계적 디버깅·코드 리뷰 요청/수신·작업분해 등 11종 스킬과, 세션 시작 시 `using-superpowers` 스킬을 시스템 컨텍스트에 자동 주입하는 부트스트랩 확장 |
-| `npm:pi-subagents@0.50.0` | `subagent` 툴 — `scout`/`worker`/`reviewer`/`oracle`/`delegate`/`researcher` 내장 서브에이전트로 자식 Pi 세션에 위임한다. superpowers 확장이 이름까지 지목하며 전제로 깔아 둔 툴이다. `researcher` 페르소나는 웹 검색을 전제로 하므로 폐쇄망에서는 무용하다 — 나머지 5개는 로컬 모델 호출만 하므로 유효하다. **단, 포어그라운드 위임만 된다** — 아래 참고 |
-| `npm:@juicesharp/rpiv-todo@2.6.1` | `/reload`·컴팩션에도 살아남는 라이브 todo 오버레이. superpowers 확장이 "설치된 todo 툴이 있으면 쓰라"고 안내하는 공백을 메운다 |
-| `npm:@juicesharp/rpiv-ask-user-question@2.6.1` | 모델이 모호할 때 추측 대신 구조화된 객관식 질문을 사용자에게 던지는 툴 |
+| `npm:pi-subagents@0.68.0` | `subagent` 툴 — `scout`/`worker`/`reviewer`/`oracle`/`delegate`/`researcher` 내장 서브에이전트로 자식 Pi 세션에 위임한다. superpowers 확장이 이름까지 지목하며 전제로 깔아 둔 툴이다. `researcher` 페르소나는 웹 검색을 전제로 하므로 폐쇄망에서는 무용하다 — 나머지 5개는 로컬 모델 호출만 하므로 유효하다. 백그라운드 위임은 0.68.0에서 구조가 바뀌었다 — 아래 참고 |
+| `npm:@juicesharp/rpiv-todo@2.10.1` | `/reload`·컴팩션에도 살아남는 라이브 todo 오버레이. superpowers 확장이 "설치된 todo 툴이 있으면 쓰라"고 안내하는 공백을 메운다 |
+| `npm:@juicesharp/rpiv-ask-user-question@2.10.1` | 모델이 모호할 때 추측 대신 구조화된 객관식 질문을 사용자에게 던지는 툴 |
 
-### 서브에이전트: 포어그라운드는 되고 백그라운드는 안 된다
+### 서브에이전트: 포어그라운드는 된다, 백그라운드는 리허설에서 확인한다
 
 `pi-subagents` 의 두 위임 경로는 서로 다른 실행 파일을 쓴다.
 
 - **포어그라운드 위임(기본)** — 자식 세션을 `pi.exe` 자신으로 띄운다.
   Node가 필요 없으므로 폐쇄망에서 **동작한다.**
-- **백그라운드/`async` 위임** — 러너를 `node.exe` 로 띄운다. 폐쇄망 PC에는
-  Node가 없으므로 프로세스 생성이 `ENOENT` 로 **실패한다.** 로그에
-  `[pi-subagents] async spawn failed: ... ENOENT` 류 메시지가 남는다.
-  이것은 설정 실수가 아니라 이 번들의 구조적 한계다 — Node를 반입하지
-  않는 결정의 결과다.
+- **백그라운드/`async` 위임** — 0.50.0에서는 러너를 `node.exe` 로 띄워 Node가
+  없는 폐쇄망 PC에서 `ENOENT` 로 실패했다. **0.68.0 소스는 달라졌다:**
+  `src/runs/shared/pi-spawn.ts` 의 `resolveBunPiExecutable()` 이 Bun으로
+  컴파일된 단독 `pi.exe` 를 알아보면, 백그라운드 러너도 `pi.exe` 자신을
+  `--mode rpc` 로 띄운다(`src/runs/background/async-execution.ts`
+  `spawnRunner`). 즉 Node 없이 동작할 **구조**다. 다만 이것은 소스를 읽어
+  확인한 것이고 실제 모델을 붙인 실행은 아직 아무도 보지 않았다 — 리허설에서
+  백그라운드 위임 1회를 돌려 `ENOENT` 가 사라졌는지 확인하기 전까지는
+  포어그라운드만 믿는다.
 
 동시 요청은 폭주하지 않는다. `start-llama.bat` 이 `--parallel 1` 로
 띄우므로 llama-server는 요청을 한 번에 하나씩 처리한다. 포어그라운드
 위임을 여러 개 겹치면 응답이 뒤섞이는 것이 아니라 **지연이 그만큼
 길어지고**, 재시도와 겹쳐 타임아웃처럼 보인다. 위임은 하나씩 하는 것이
 이 구성에서 가장 빠르다.
+
+## 반입 매체로 복사할 때
+
+스테이징 PC의 `models\` 에는 반입하지 않는 모델이 함께 있다:
+`Qwen3.8-27B-Q8_0.gguf`, `Qwen3.8-27B-Uncensored-GGUF\`,
+`DeepSeek-R1-0528-Qwen3-8B-GGUF\`. 매니페스트는 이 셋을 경로로 빼 두었으므로
+같이 복사돼도 `verify-bundle.bat` 은 조용하다. 약 63GB이니 복사할 때 빼는 편이
+낫다(예: `robocopy H:\model\pi_agent C:\pi_agent /E /XF Qwen3.8-27B-Q8_0.gguf
+/XD Qwen3.8-27B-Uncensored-GGUF DeepSeek-R1-0528-Qwen3-8B-GGUF`).
+
+## 이전 번들에서 올릴 때 (Pi 0.84.2 → 0.85.1)
+
+같은 `C:\pi_agent` 에 새 번들을 덮어쓰는 경우에만 해당한다. 새 폴더에 풀면
+건너뛴다.
+
+1. `start-llama.bat` 창과 Pi 창을 모두 닫는다.
+2. `home\agent\npm` 폴더를 지운다. `xcopy /D` 는 새 판에서 사라진 파일을
+   지우지 않는다 — pi-subagents는 0.50.0에서 0.68.0으로 올라가며 의존성
+   (`acorn`, `undici` 추가)과 파일 구성이 바뀌었으므로 옛 파일이 섞이면 안 된다.
+   세션 기록(`home\agent\sessions`)은 지우지 않는다.
+3. `home\agent\settings.json` 의 `packages` 배열을 `pi-packages\settings.packages.json`
+   과 같게 고친다(직접 고친 설정이 없으면 파일을 지우고 다시 실행해도 된다).
+   고치지 않으면 `start-pi.bat` 이 `[warn]` 으로 차이를 알려 준다.
+4. `verify-bundle.bat` → `verify-offline.bat` 순서로 다시 확인한다.
+
+`bin\pi\docs\keybindings.md` 기준으로 이미지 붙여넣기는 여전히 윈도우에서
+`Alt+V` 다(0.84.3에서 윈도우·WSL 기본 키가 정리됐지만 이 키는 그대로다).
 
 **`pi install` 은 폐쇄망 PC에서 쓰지 않는다.** npm/git 네트워크 호출이
 필요하므로 폐쇄망에서는 동작하지 않는다 — 반입한 `pi-packages\` 가 이미 그
@@ -343,6 +397,93 @@ bin\pi\pi.exe --offline --model %PI_MODEL_ID% --no-extensions --no-skills
 파일이기 때문이다. 번들 목록으로 되돌리려면 `home\agent\settings.json` 을
 지우고 다시 실행하거나, 직접 고친 설정이 있으면 그 파일의 `packages` 배열만
 손으로 맞춘다.
+
+## 설정 최적화 (GTX 1080 Ti ×3, RAM 128GB)
+
+`config.env.example` 에 2026-09-17 추가된 키들이다. 근거는 llama.cpp b11010
+소스이고, **VRAM·토큰/초 효과는 이 PC에서 아직 아무도 재지 않았다** — 리허설이
+각 항목의 전후를 기록한다.
+
+| 키 | `config.env.example` 값 (키가 비었을 때) | 무엇을 하나 |
+|---|---|---|
+| (고정) `-fa auto` | 항상 | flash attention. Pascal은 텐서코어가 없어 tile/vec 커널로 돈다(`ggml-cuda/fattn.cu`). `auto` 는 장치에서 돌 수 있는지 먼저 시험하고 기동 로그에 `flash_attn enabled` 또는 `not supported, set to disabled` 를 남긴다 — `on` 으로 강제하면 그 시험을 건너뛰어 안 될 때 연산이 CPU로 간다. 기동 로그에서 이 줄을 확인한다 |
+| `LLAMA_CTX` | 65536 (32768) | 서버 컨텍스트이자 Pi의 `contextWindow`. qwen35는 전체 어텐션 16층만 KV를 가져 65536에서 KV 약 4.0 GiB(f16) |
+| `LLAMA_KV_TYPE` | `f16` (`f16`) | `q8_0` 이면 저장되는 KV가 절반. 다만 Pascal의 prefill 커널(tile)은 F16 임시 사본으로 계산하므로 최대 사용량 절감은 그보다 작다. Q6_K(20.9 GiB)나 더 긴 컨텍스트의 리허설 후보이지 보장된 해결책이 아니다 |
+| `LLAMA_CACHE_RAM_MIB` | 32768 (llama.cpp 기본 8192) | 프롬프트 캐시를 시스템 RAM에 둔다. 슬롯이 하나라 서브에이전트 턴이 본 세션의 KV를 밀어내는데, 이 캐시가 있으면 다음 턴에 전체 이력을 다시 prefill하지 않는다 — Pascal에서 가장 느린 단계다 |
+| `LLAMA_SPEC_MTP` | `0` (꺼짐) | 모델 내장 MTP 층으로 추측 디코딩(`--spec-type draft-mtp`). 하이브리드 모델은 되감기에 체크포인트를 쓰므로 Pascal에서 이득이 있는지 모른다 — 리허설 A/B 후 켠다 |
+| `LORA_FILE` / `LORA_SCALE` | 비움 / 1.0 (어댑터 없음 / 1.0) | 아래 "LoRA" 절 |
+
+양자화 선택 (2026-09-17 결정): **기본은 Q6_K**, 백업은 Q4_K_M. 둘 다 반입한다.
+Q6_K는 GPU에 약 19.6 GiB(입력 임베딩 0.97 GiB는 RAM에 남는다)를 올리고, mmproj
+0.87 GiB와 65536 컨텍스트 KV 4.0 GiB를 더하면 연산 버퍼 전 약 24.6 GiB다 — 3장
+합계 안에는 들어가지만 장별로 들어가는지는 `GPU_TENSOR_SPLIT` 이 정한다. 토큰마다
+읽는 가중치가 Q4_K_M의 약 1.33배라 생성 속도는 20~25% 느릴 것으로 본다(추정 —
+아직 재지 않았다). 안 들어가거나 너무 느리면 순서대로:
+`LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf`.
+Q4_K_M으로 바꿔도 alias·mmproj·템플릿은 그대로다. Q8_0(27.1 GiB)은 33GB에 안
+들어가 반입하지 않는다.
+
+## LoRA — 오래 쓸수록 이 PC에 맞춰 가는 경로
+
+먼저 기대치를 정확히 한다. **모델은 쓰는 동안 스스로 학습하지 않는다.** 할 수
+있는 것은 사람이 고른 세션을 모아 가끔(예: 월 1회) 따로 학습시키고, 검사를
+통과한 어댑터만 켜는 것이다. 그리고 효과가 가장 빠르고 위험이 없는 것은
+가중치가 아니라 **지시문(AGENTS.md)** 을 키우는 쪽이다. 그래서 순서가 이렇다.
+
+**1단계 — `/retro` (지금 바로, 위험 없음).** 작업이 잘 끝난 세션에서 Pi에
+`/retro` 를 입력한다. 이 세션에서 확인된 규칙·명령·실수를 `AGENTS.md` 추가안으로
+정리해 보여 준다. **파일은 쓰지 않는다** — 번호로 골라 "1, 3번 반영해" 라고
+답하면 그때 반영한다. 프로젝트 규칙은 작업 폴더의 `AGENTS.md`, 모든 작업에 통하는
+습관은 `C:\pi_agent\home\agent\AGENTS.md` 에 쌓인다. Pi는 시작할 때 둘 다
+읽는다(`bin\pi\docs\usage.md` "Context Files").
+
+**2단계 — 학습 데이터 모으기.** `/retro` 가 "LoRA 학습 후보: 예" 라고 한
+세션만, `/session` 으로 세션 ID를 확인해 `C:\pi_agent\lora\approved.txt` 에
+한 줄씩 적는다(`#` 뒤는 주석). 결과가 틀렸거나, 비밀번호·키·개인정보가 오간
+세션은 넣지 않는다 — 틀린 대화로 학습하면 틀린 습관이 굳는다.
+
+```
+C:\pi_agent\export-sessions.bat
+```
+
+`home\agent\sessions` 에서 `lora\approved.txt` 의 세션만 골라 `lora\train.jsonl` 로
+쓴다. 파이썬을 직접 부르지 않는다 — 1단계의 `verify-bundle.bat` 과 같은 이유로
+한글 사유 메시지가 깨진다. `--keep-thinking` 같은 인자는 뒤에 붙이면 그대로
+넘어간다.
+
+| 종료 코드 | 뜻 |
+|---|---|
+| 0 | 내보냄 |
+| 2 | `approved.txt` 의 ID 중 세션 폴더에 없는 것이 있다(나머지는 내보냈다) — 오타 확인 |
+| 3 | 승인 목록이 비었거나 내보낸 것이 0개 |
+
+사고(thinking) 내용은 기본으로 빠진다(`--keep-thinking` 으로 보존). 이미지는
+`[image omitted]` 로 바뀐다. `password=`, `token:`, `sk-...`, 개인키 블록 같은
+문자열은 `[REDACTED]` 로 가려지지만, **가림은 보조 장치다** — 승인 전에 사람이
+보는 것이 1차 방어다. 반대 방향 한계도 있다: 키 이름만 보고 가리므로
+`token = tokenizer(text)` 같은 평범한 코드도 `token = [REDACTED]` 로 바뀐다. 코드가
+많은 세션은 `lora\train.jsonl` 에서 그런 줄이 학습을 망치지 않는지 확인한다.
+
+**3단계 — 학습.** 이 번들에는 학습 도구가 없다. 1080 Ti 3장에서 27B 학습은
+경로는 있지만 매우 느리고, 원본 가중치(약 56GB)와 학습용 파이썬 스택을 따로
+반입해야 한다. 학습할 때 LoRA 대상에서 `linear_attn.out_proj` 는 빼야 한다 — 넣으면 GGUF 변환이 실패한다(2026-09-17 CPU 실측). 반입 전 확인 절차는
+`docs/superpowers/plans/rehearsal-2026-08-18.md` §11-13(개발 트리 문서).
+
+**4단계 — 어댑터 켜기와 되돌리기.** 학습 결과를 GGUF 어댑터로 변환한 파일을
+`C:\pi_agent\lora\` 에 두고 `config.env` 에 적는다.
+
+```
+set "LORA_FILE=pi-sessions-2026-10.gguf"
+set "LORA_SCALE=1.0"
+```
+
+`start-llama.bat` 을 다시 띄운 뒤 **`verify-offline.bat` 이 통과해야 켜 둔다.**
+툴 왕복이 깨지면 그 어댑터는 버린다. 되돌리기는 `LORA_FILE` 을 비우고
+`start-llama.bat` 을 다시 띄우는 것이 전부다. 파일 이름에는 영문·숫자·`._-`
+만 쓴다 — 콜론·괄호·공백이 들어가면 `config.env` 검사가 거부한다(llama-server가
+콜론을 배율 구분자로 읽고, 괄호는 배치 블록을 깨뜨린다). `lora\` 폴더는
+무결성 검사 범위 밖이라 여기에 파일을 넣어도 `verify-bundle.bat` 이 빨간불을
+띄우지 않는다.
 
 ## 하지 않는 것
 - `pi install` 로 패키지나 확장을 새로 설치하지 않는다. npm이 필요하고

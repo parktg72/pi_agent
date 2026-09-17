@@ -288,3 +288,34 @@ def test_orchestration_scaffold_stays_out_of_the_staging_scope(tmp_path):
     listed = {entry["relative"] for entry in doc["files"]}
     assert listed & scaffold == set(), sorted(listed & scaffold)
     assert "bin/pi/pi.exe" in listed, "payload는 그대로 범위 안이어야 한다"
+
+
+def test_models_kept_on_the_staging_pc_but_not_shipped_are_excluded_by_exact_path(tmp_path):
+    # 2026-09-17 사용자 결정: 반입 모델은 Q6_K(기본)·Q4_K_M(백업)·mmproj. 스테이징
+    # PC의 models\에 있는 Q8_0·Uncensored·DeepSeek-R1-8B는 옮기지 않고 해시에서만
+    # 뺀다. 이름이 아니라 번들 루트 기준 정확한 경로로 뺀다 - 같은 이름이 다른
+    # 곳에 생겨도 범위 밖으로 새지 않게.
+    root = make_bundle(tmp_path)
+    models = root / "models"
+    for name in ("Qwen3.8-27B-Q6_K.gguf", "Qwen3.8-27B-Q4_K_M.gguf", "mmproj-Qwen3.8-27B-BF16.gguf",
+                 "Qwen3.8-27B-Q8_0.gguf"):
+        (models / name).write_bytes(b"gguf")
+    for sub, name in (("Qwen3.8-27B-Uncensored-GGUF", "Qwen3.8-27B-Uncensored-Q8_0.gguf"),
+                      ("DeepSeek-R1-0528-Qwen3-8B-GGUF", "DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf")):
+        (models / sub).mkdir()
+        (models / sub / name).write_bytes(b"gguf")
+    decoy = root / "bin" / "models"
+    decoy.mkdir(parents=True)
+    (decoy / "Qwen3.8-27B-Q8_0.gguf").write_bytes(b"payload")
+
+    doc = manifest.build(root, staged_at="2026-09-17T00:00:00Z", target="T")
+    listed = {entry["relative"] for entry in doc["files"]}
+
+    for shipped in ("models/Qwen3.8-27B-Q6_K.gguf", "models/Qwen3.8-27B-Q4_K_M.gguf",
+                    "models/mmproj-Qwen3.8-27B-BF16.gguf", "bin/models/Qwen3.8-27B-Q8_0.gguf"):
+        assert shipped in listed, shipped
+    assert not any(rel.startswith("models/Qwen3.8-27B-Q8_0") for rel in listed)
+    assert not any(rel.startswith("models/Qwen3.8-27B-Uncensored-GGUF/") for rel in listed)
+    assert not any(rel.startswith("models/DeepSeek-R1-0528-Qwen3-8B-GGUF/") for rel in listed)
+    assert doc["excludedPaths"] == list(manifest.EXCLUDED_PATHS)
+    assert manifest.verify(root, doc) == []

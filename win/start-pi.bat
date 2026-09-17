@@ -75,7 +75,13 @@ rem thinking levels onto the template's chat_template_kwargs; this passes the
 rem configured level. A config.env written before this key existed leaves
 rem PI_THINKING unset, so the bundle default is applied here, not in that file.
 if not defined PI_THINKING set "PI_THINKING=medium"
-"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %*
+rem /retro turns what a session taught into proposed AGENTS.md lines and a LoRA
+rem approval hint, without writing anything until the user approves. The
+rem template is read straight from the hashed bundle root, so nothing is copied
+rem into home\agent and there is no sync step to go stale.
+set "PROMPT_ARG="
+if exist "%ROOT%pi-prompts\retro.md" set PROMPT_ARG=--prompt-template "%ROOT%pi-prompts\retro.md"
+"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %*
 exit /b %errorlevel%
 
 :place_models_json
@@ -95,7 +101,11 @@ if not exist "%ROOT%models.json" (
   exit /b 1
 )
 if not exist "%PI_CODING_AGENT_DIR%" mkdir "%PI_CODING_AGENT_DIR%"
-%BOOTSTRAP_PY% "%ROOT%tools\render_models_json.py" --template "%ROOT%models.json" --out "%PI_CODING_AGENT_DIR%\models.json" --port "%LLAMA_PORT%" --alias "%MODEL_ALIAS%" --model-id "%PI_MODEL_ID%"
+rem contextWindow in the rendered models.json comes from LLAMA_CTX, the same
+rem value start-llama.bat gives the server, with the same default. A template
+rem that pinned 32768 once sat under a server started with 65536.
+if not defined LLAMA_CTX set "LLAMA_CTX=32768"
+%BOOTSTRAP_PY% "%ROOT%tools\render_models_json.py" --template "%ROOT%models.json" --out "%PI_CODING_AGENT_DIR%\models.json" --port "%LLAMA_PORT%" --alias "%MODEL_ALIAS%" --model-id "%PI_MODEL_ID%" --ctx "%LLAMA_CTX%"
 if errorlevel 1 (
   echo [FAIL] could not render models.json into %PI_CODING_AGENT_DIR%
   exit /b 1

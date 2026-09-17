@@ -100,10 +100,10 @@ def test_layout_requires_vc_source_or_skip_flag(tmp_path, capsys):
     # Create minimal zip files for each asset
     for key, asset in {
         "pi": "pi-windows-x64.zip",
-        "llama-cuda": f"llama-b10470-bin-win-cuda-12.4-x64.zip",
+        "llama-cuda": f"llama-b11010-bin-win-cuda-12.4-x64.zip",
         "llama-cudart": "cudart-llama-bin-win-cuda-12.4-x64.zip",
-        "llama-vulkan": f"llama-b10470-bin-win-vulkan-x64.zip",
-        "llama-cpu": f"llama-b10470-bin-win-cpu-x64.zip",
+        "llama-vulkan": f"llama-b11010-bin-win-vulkan-x64.zip",
+        "llama-cpu": f"llama-b11010-bin-win-cpu-x64.zip",
     }.items():
         z = zipfile.ZipFile(cache_dir / asset, "w")
         z.close()
@@ -118,10 +118,10 @@ def test_layout_requires_vc_source_or_skip_flag(tmp_path, capsys):
         )
         for k, v in {
             "pi": "pi-windows-x64.zip",
-            "llama-cuda": f"llama-b10470-bin-win-cuda-12.4-x64.zip",
+            "llama-cuda": f"llama-b11010-bin-win-cuda-12.4-x64.zip",
             "llama-cudart": "cudart-llama-bin-win-cuda-12.4-x64.zip",
-            "llama-vulkan": f"llama-b10470-bin-win-vulkan-x64.zip",
-            "llama-cpu": f"llama-b10470-bin-win-cpu-x64.zip",
+            "llama-vulkan": f"llama-b11010-bin-win-vulkan-x64.zip",
+            "llama-cpu": f"llama-b11010-bin-win-cpu-x64.zip",
         }.items()
     }
 
@@ -170,3 +170,47 @@ def test_manifest_and_verify_pin_utf8_explicitly(tmp_path):
     assert calls, "stage.py에서 텍스트 입출력을 찾지 못했다 - 테스트가 낡았다"
     for call in calls:
         assert 'encoding="utf-8"' in call, call
+
+
+def test_model_check_skips_the_vision_projector_but_still_checks_chat_models(tmp_path, capsys):
+    # 2026-09-17 실측: mmproj-Qwen3.8-27B-BF16.gguf(general.architecture=clip)가
+    # "tokenizer.chat_template이 없다"로 FAIL을 냈다. 프로젝터는 채팅 모델이 아니라
+    # 템플릿이 원래 없다 - 오탐이다. 대신 템플릿 없는 채팅 모델은 여전히 잡아야 한다.
+    from test_gguf import GGUF_TYPE_STRING, _string, write_gguf
+
+    models = tmp_path / "models"
+    models.mkdir()
+    write_gguf(models / "mmproj-x.gguf", [("general.architecture", GGUF_TYPE_STRING, _string(b"clip"))])
+    write_gguf(models / "chat.gguf", [
+        ("general.architecture", GGUF_TYPE_STRING, _string(b"qwen35")),
+        ("tokenizer.chat_template", GGUF_TYPE_STRING, _string(b"{% if tools %}tool_call{% endif %}")),
+    ])
+    assert stage.main(["model-check", "--root", str(tmp_path)]) == 0
+    assert "[skip] mmproj-x.gguf" in capsys.readouterr().out
+
+    write_gguf(models / "bare.gguf", [("general.architecture", GGUF_TYPE_STRING, _string(b"llama"))])
+    assert stage.main(["model-check", "--root", str(tmp_path)]) == 1
+
+
+def test_model_check_fails_when_only_a_projector_is_left(tmp_path):
+    # opencode 리뷰(2026-09-17): 채팅 모델이 모두 빠지고 mmproj만 남아도 통과하던 경로.
+    from test_gguf import GGUF_TYPE_STRING, _string, write_gguf
+
+    models = tmp_path / "models"
+    models.mkdir()
+    write_gguf(models / "mmproj-x.gguf", [("general.architecture", GGUF_TYPE_STRING, _string(b"clip"))])
+    assert stage.main(["model-check", "--root", str(tmp_path)]) == 1
+
+
+def test_model_check_does_not_excuse_a_projector_under_a_chat_model_name(tmp_path):
+    # opencode 리뷰: 기본 모델 이름으로 프로젝터 파일이 놓여도 clip이라 건너뛰던 경로.
+    from test_gguf import GGUF_TYPE_STRING, _string, write_gguf
+
+    models = tmp_path / "models"
+    models.mkdir()
+    write_gguf(models / "Qwen3.8-27B-Q6_K.gguf", [("general.architecture", GGUF_TYPE_STRING, _string(b"clip"))])
+    write_gguf(models / "chat.gguf", [
+        ("general.architecture", GGUF_TYPE_STRING, _string(b"qwen35")),
+        ("tokenizer.chat_template", GGUF_TYPE_STRING, _string(b"{% if tools %}tool_call{% endif %}")),
+    ])
+    assert stage.main(["model-check", "--root", str(tmp_path)]) == 1

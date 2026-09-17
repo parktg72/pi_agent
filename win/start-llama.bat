@@ -33,12 +33,12 @@ if /I "%LLAMA_BACKEND%"=="vulkan" (
   echo        diagnostic only - see ALLOW_CPU_DIAGNOSTIC in config.env.
   exit /b 8
 )
-rem cpu means loading a 16.8GB model into system RAM. On a machine short of RAM
+rem cpu means loading a 22.4GB (Q6_K) model into system RAM. On a machine short of RAM
 rem or pagefile that thrashes for a long time instead of failing, so it must be
 rem chosen on purpose, never by accident.
 if /I "%LLAMA_BACKEND%"=="cpu" if not "%ALLOW_CPU_DIAGNOSTIC%"=="1" (
   echo [FAIL] LLAMA_BACKEND=cpu needs an explicit opt-in.
-  echo        This loads a 16.8GB model into system RAM. A 27B dense model does
+  echo        This loads a 22.4GB Q6_K model into system RAM. A 27B dense model does
   echo        not reach usable speed on CPU - this backend is for narrowing down
   echo        a problem, not for production.
   echo        Set ALLOW_CPU_DIAGNOSTIC=1 in config.env if that is what you want.
@@ -74,7 +74,48 @@ if defined GPU_TENSOR_SPLIT set "TS_ARG=-ts %GPU_TENSOR_SPLIT%"
 set "MMPROJ_ARG="
 if defined MMPROJ_FILE set MMPROJ_ARG=--mmproj "%ROOT%models\%MMPROJ_FILE%"
 
+rem Tuning for 3x GTX 1080 Ti and 128GB RAM, 2026-09-17. Evidence for each line
+rem is llama.cpp b11010 source; see config.env.example for the operator view.
+rem Flash attention is left on auto, on purpose. ggml-cuda/fattn.cu picks the
+rem tile/vec kernels on GPUs without tensor cores, so auto resolves to enabled on
+rem Pascal. auto probes the device first (src/llama-context.cpp) and logs
+rem "flash_attn not supported, set to disabled" if it cannot run there; forcing
+rem on skips that probe and lets the op land on the CPU instead. A quantized KV
+rem cache turns auto into enabled by itself.
+rem -fit off: this script owns -ngl, -ts and -c. With -ngl set, --fit (default
+rem on) gives up every start and prints an abort line operators read as a
+rem failure (common/fit.cpp "n_gpu_layers already set by user").
+if not defined LLAMA_KV_TYPE set "LLAMA_KV_TYPE=f16"
+
+rem Host-RAM prompt cache. With a single slot, switching between a session and
+rem a subagent evicts the KV state; the RAM cache lets it come back without a
+rem full re-prefill, which is the slow part on Pascal. Unset keeps the
+rem llama.cpp default of 8192 MiB.
+set "CACHE_RAM_ARG="
+if defined LLAMA_CACHE_RAM_MIB set "CACHE_RAM_ARG=--cache-ram %LLAMA_CACHE_RAM_MIB%"
+
+rem Speculative decoding from the model's own MTP layer. Opt-in until a field
+rem A/B measurement: on this hybrid model the target context rolls back through
+rem checkpoints, so the gain on Pascal is unmeasured.
+set "SPEC_ARG="
+if "%LLAMA_SPEC_MTP%"=="1" set "SPEC_ARG=--spec-type draft-mtp"
+
+rem LoRA adapter trained on the target PC. Clearing LORA_FILE is the rollback.
+rem --lora-scaled splits FNAME:SCALE on every colon, so an absolute H:\ path
+rem has one colon too many and startup fails. This script has already changed
+rem to the bundle root, so the relative lora\ path is used on purpose.
+if not defined LORA_SCALE set "LORA_SCALE=1.0"
+set "LORA_ARG="
+if defined LORA_FILE if not exist "%ROOT%lora\%LORA_FILE%" (
+  echo [FAIL] "%ROOT%lora\%LORA_FILE%" not found
+  echo        Clear LORA_FILE in config.env to start the base model without an adapter.
+  exit /b 2
+)
+if defined LORA_FILE set LORA_ARG=--lora-scaled "lora\%LORA_FILE%:%LORA_SCALE%"
+
 echo [info] starting %MODEL_FILE% as %MODEL_ALIAS% on the %LLAMA_BACKEND% backend
+echo [info] ctx %LLAMA_CTX%, kv cache %LLAMA_KV_TYPE%, flash attention auto
+if defined LORA_FILE echo [info] LoRA adapter lora\%LORA_FILE% at scale %LORA_SCALE%
 "%LLAMA_DIR%\llama-server.exe" ^
   -m "%ROOT%models\%MODEL_FILE%" ^
   --alias "%MODEL_ALIAS%" ^
@@ -84,7 +125,8 @@ echo [info] starting %MODEL_FILE% as %MODEL_ALIAS% on the %LLAMA_BACKEND% backen
   -ngl 999 ^
   -c %LLAMA_CTX% ^
   --parallel 1 ^
-  -sm layer %TS_ARG% %MMPROJ_ARG%
+  -sm layer %TS_ARG% %MMPROJ_ARG% ^
+  -fa auto -fit off -ctk %LLAMA_KV_TYPE% -ctv %LLAMA_KV_TYPE% %CACHE_RAM_ARG% %SPEC_ARG% %LORA_ARG%
 exit /b %errorlevel%
 
 :load_config

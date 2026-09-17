@@ -31,9 +31,17 @@ from config_parse import write_atomic
 PLACEHOLDERS = ("LLAMA_PORT", "MODEL_ALIAS")
 
 
-def render(template_text: str, port: str, alias: str) -> tuple[str, list[str]]:
-    """(렌더링 결과, 문제 목록). 문제가 있으면 결과는 쓰면 안 된다."""
+def render(template_text: str, port: str, alias: str, ctx: str | None = None) -> tuple[str, list[str]]:
+    """(렌더링 결과, 문제 목록). 문제가 있으면 결과는 쓰면 안 된다.
+
+    ctx가 주어지면 alias 모델의 contextWindow를 그 값으로 쓰고 maxTokens를 그 안으로
+    줄인다. 2026-09-17 실측: config.env LLAMA_CTX=65536인데 템플릿의 contextWindow가
+    32768로 고정돼 있어 Pi가 서버 창의 절반만 쓰고 있었다(stub 왕복 요청의
+    max_completion_tokens=25539). 창 크기도 포트·alias처럼 config.env 하나에서 온다.
+    """
     problems: list[str] = []
+    if ctx is not None and not (ctx.isdigit() and int(ctx) > 0):
+        return "", [f"LLAMA_CTX={ctx}는 양의 정수가 아니다"]
     try:
         body = string.Template(template_text).substitute(LLAMA_PORT=port, MODEL_ALIAS=alias)
     except KeyError as error:
@@ -57,6 +65,17 @@ def render(template_text: str, port: str, alias: str) -> tuple[str, list[str]]:
         ids = [model.get("id") for model in provider.get("models", [])]
         if alias not in ids:
             problems.append(f"제공자 {name}의 모델 목록에 alias {alias}가 없다: {ids}")
+        if ctx is not None:
+            for model in provider.get("models", []):
+                # llama-server는 alias 하나만 서빙한다. 다른 항목의 창까지 이 값으로
+                # 바꾸면 그 모델에 없는 창을 Pi에 광고하게 된다.
+                if model.get("id") != alias:
+                    continue
+                model["contextWindow"] = int(ctx)
+                if not isinstance(model.get("maxTokens"), int) or model["maxTokens"] > int(ctx):
+                    model["maxTokens"] = int(ctx)
+    if ctx is not None:
+        body = json.dumps(document, indent=2, ensure_ascii=False) + "\n"
     return body, problems
 
 
@@ -85,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", required=True)
     parser.add_argument("--alias", required=True)
     parser.add_argument("--model-id", default=None)
+    parser.add_argument("--ctx", required=True)
     arguments = parser.parse_args(argv)
 
     if not arguments.template.is_file():
@@ -95,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     template_text = arguments.template.read_text(encoding="utf-8")
 
-    body, problems = render(template_text, arguments.port, arguments.alias)
+    body, problems = render(template_text, arguments.port, arguments.alias, arguments.ctx)
     if not problems and arguments.model_id:
         problems = check_model_id(body, arguments.model_id)
     for problem in problems:
@@ -108,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as error:
         print(f"[FAIL] {arguments.out}를 쓰지 못했다: {error}", file=sys.stderr)
         return 1
-    print(f"[ok] models.json 생성: 포트 {arguments.port}, alias {arguments.alias}")
+    print(f"[ok] models.json 생성: 포트 {arguments.port}, alias {arguments.alias}, contextWindow {arguments.ctx}")
     return 0
 
 

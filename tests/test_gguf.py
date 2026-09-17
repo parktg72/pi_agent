@@ -82,7 +82,8 @@ def test_the_bundled_qwen_template_defaults_to_xhigh_and_takes_three_efforts():
     # 여전히 맞는지 실물로 확인한다.
     import pytest
 
-    model = Path(__file__).resolve().parents[1] / "models" / "Qwen3.8-27B-Q4_K_M.gguf"
+    # 2026-09-17부터 기본 모델은 Q6_K다. 같은 원본을 양자화만 달리한 파일이라 템플릿은 같다.
+    model = Path(__file__).resolve().parents[1] / "models" / "Qwen3.8-27B-Q6_K.gguf"
     if not model.is_file():
         pytest.skip("모델 파일이 없는 환경 - 반입 번들에서만 도는 검사")
     template = gguf.read_metadata(model, ("tokenizer.chat_template",)).get(

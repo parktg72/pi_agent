@@ -17,6 +17,8 @@ home/
 evidence/
 # install-python-packages.bat의 기본 설치 대상 (대상 PC에서 생성)
 .venv/
+# 대상 PC에서 학습해 넣는 LoRA 어댑터·승인 목록·학습 데이터 (config.env LORA_FILE)
+/lora/
 
 # 스테이징 산출물
 .cache/
@@ -37,6 +39,8 @@ STAGING_MANIFEST.json
 /settings.packages.json
 /tools-win/
 /README-폐쇄망.md
+/pi-prompts/
+/export-sessions.bat
 
 # SDD 작업 공간 (원장·브리프·리뷰 패키지)
 .superpowers/

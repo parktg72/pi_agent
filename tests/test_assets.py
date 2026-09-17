@@ -8,17 +8,17 @@ import assets
 def test_catalog_pins_the_two_verified_hashes():
     pi = assets.CATALOG["pi"]
     assert pi.name == "pi-windows-x64.zip"
-    assert pi.sha256 == "741fc1ae1afecb573ac2888e011188ff446b3940f4aabe1583f60bf55be8a3d0"
-    assert pi.bytes == 45470989
+    assert pi.sha256 == "002fa95b90d521245b9985d8f168caebc237ad56e7e30b319807dee1b2e17e1c"
+    assert pi.bytes == 45009021
     cuda = assets.CATALOG["llama-cuda"]
-    assert cuda.name == "llama-b10470-bin-win-cuda-12.4-x64.zip"
-    assert cuda.sha256 == "e6f3fa9790ab7684ded44ade774dc94742ddb99e4b0abaf1603dab4f3d0803d3"
+    assert cuda.name == "llama-b11010-bin-win-cuda-12.4-x64.zip"
+    assert cuda.sha256 == "f66167619958a9c94a3ff43f0f847a83399716f40d70c2c7c9ed097d0a11c280"
 
 
 def test_catalog_carries_cudart_vulkan_and_cpu():
     for key in ("llama-cudart", "llama-vulkan", "llama-cpu"):
         assert key in assets.CATALOG
-        assert assets.CATALOG[key].url.startswith("https://github.com/ggml-org/llama.cpp/releases/download/b10470/")
+        assert assets.CATALOG[key].url.startswith("https://github.com/ggml-org/llama.cpp/releases/download/b11010/")
     for key in ("llama-cudart", "llama-vulkan", "llama-cpu"):
         assert assets.CATALOG[key].sha256 is not None and len(assets.CATALOG[key].sha256) == 64
         assert assets.CATALOG[key].bytes and assets.CATALOG[key].bytes > 0
@@ -31,7 +31,7 @@ def test_no_catalog_entry_may_reference_cuda_13():
 
 
 def test_cuda_13_is_refused_by_name_and_by_url():
-    assert assets.forbidden_reason("llama-b10470-bin-win-cuda-13.3-x64.zip") is not None
+    assert assets.forbidden_reason("llama-b11010-bin-win-cuda-13.3-x64.zip") is not None
     assert assets.forbidden_reason("https://example/cudart-llama-bin-win-cuda-13.4-arm64.zip") is not None
 
 
