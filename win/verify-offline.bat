@@ -105,6 +105,7 @@ rem its automatic reflection must never add a turn to the judged round trip.
 set "LEARNING_AUTO_REFLECT=0"
 set "EXT_ARG="
 if exist "%ROOT%pi-extensions\learning.ts" set EXT_ARG=--extension "%ROOT%pi-extensions\learning.ts"
+if exist "%ROOT%pi-extensions\lora-snapshot.ts" set EXT_ARG=%EXT_ARG% --extension "%ROOT%pi-extensions\lora-snapshot.ts"
 "%ROOT%bin\pi\pi.exe" --offline --no-session --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %EXT_ARG% --tools read --mode json -p "%PROBE% - read this file with the read tool and answer with exactly the word written in it" > "%EV%\pi-tool-roundtrip.json" 2>&1
 set "ROUNDTRIP_RC=!errorlevel!"
 type "%EV%\pi-tool-roundtrip.json"

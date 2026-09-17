@@ -12,10 +12,11 @@ rem verify-bundle.bat). This wrapper pins the console and Python to UTF-8.
 set "PYTHONIOENCODING=utf-8"
 set "PYTHONUTF8=1"
 
-rem Only sessions listed in lora\approved.txt are exported. Extra arguments
-rem such as --keep-thinking are passed through. The tool's own exit code is
-rem returned unchanged: 0 exported, 2 an approved ID was not found, 3 nothing
-rem to export.
+rem Only sessions listed in lora\approved.txt are exported, to lora\train.jsonl
+rem plus lora\train.report.md (egress review report with the sha256). Extra
+rem arguments such as --drop-thinking are passed through. The tool's own exit
+rem code is returned unchanged: 0 exported, 2 an approved ID was not found,
+rem 3 nothing to export.
 if not exist "%ROOT%lora" mkdir "%ROOT%lora"
 %PYTHON_CMD% "%ROOT%tools\export_sessions.py" --sessions-dir "%ROOT%home\agent\sessions" --approved "%ROOT%lora\approved.txt" --out "%ROOT%lora\train.jsonl" %*
 exit /b %errorlevel%

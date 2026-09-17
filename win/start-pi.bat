@@ -95,8 +95,13 @@ rem learning extension: learned-rule memory injected every turn, remember_rule /
 rem package_skill tools, /reflect, and approved skills as one-call tools. Loaded
 rem from the hashed bundle root; its data lives under home\agent and .pi\.
 rem LEARNING_AUTO_REFLECT from config.env reaches it through the environment.
+rem lora-snapshot records the system prompt, tool schemas and chat template
+rem arguments each request actually used (only when they change) as a custom
+rem session entry outside the LLM context, so export-sessions.bat can rebuild
+rem training samples exactly as the model saw them.
 set "EXT_ARG="
 if exist "%ROOT%pi-extensions\learning.ts" set EXT_ARG=--extension "%ROOT%pi-extensions\learning.ts"
+if exist "%ROOT%pi-extensions\lora-snapshot.ts" set EXT_ARG=%EXT_ARG% --extension "%ROOT%pi-extensions\lora-snapshot.ts"
 "%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %*
 exit /b %errorlevel%
 
