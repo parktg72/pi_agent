@@ -164,3 +164,40 @@ def test_a_context_too_small_for_the_reserve_floor_is_refused(tmp_path, ctx):
     import config_parse
     _, problems = config_parse.parse_text(f'set "LLAMA_CTX={ctx}"\n')
     assert problems
+
+
+# --- pi-subagents: 단일 슬롯 서버에서 백그라운드 기본 실행을 끈다 -----------------------
+# pi-subagents docs/configuration.md: asyncByDefault 가 켜져 있으면 요청이 async 를 생략할 때
+# 백그라운드로 돈다. start-llama.bat 은 --parallel 1 이라 부모와 자식이 한 슬롯을 번갈아 쓰고,
+# 서로의 KV 를 밀어내 긴 prefill 을 반복하며 대기열에서 타임아웃될 수 있다.
+
+
+def test_subagent_config_gets_foreground_default_when_absent(tmp_path):
+    config = tmp_path / "extensions" / "subagent" / "config.json"
+    rc = pi_settings.main(["--settings", str(tmp_path / "settings.json"), "--ctx", "63488", "--subagent-config", str(config)])
+    assert rc == 0
+    assert json.loads(config.read_text(encoding="utf-8")) == {"asyncByDefault": False}
+
+
+def test_subagent_config_keeps_an_operator_choice_and_other_keys(tmp_path):
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"asyncByDefault": True, "toolDescriptionMode": "full"}), encoding="utf-8")
+    before = config.read_text(encoding="utf-8")
+    rc = pi_settings.main(["--settings", str(tmp_path / "settings.json"), "--ctx", "63488", "--subagent-config", str(config)])
+    assert rc == 0
+    assert config.read_text(encoding="utf-8") == before
+
+
+def test_a_broken_subagent_config_fails_and_is_not_overwritten(tmp_path):
+    config = tmp_path / "config.json"
+    config.write_text("{ nope", encoding="utf-8")
+    rc = pi_settings.main(["--settings", str(tmp_path / "settings.json"), "--ctx", "63488", "--subagent-config", str(config)])
+    assert rc == 1
+    assert config.read_text(encoding="utf-8") == "{ nope"
+
+
+def test_both_pi_callers_pass_the_subagent_config_path():
+    for script in ("start-pi.bat", "verify-offline.bat"):
+        body = _read(script)
+        line = next(l for l in body.splitlines() if "tools\\pi_settings.py" in l and not l.startswith("rem"))
+        assert '--subagent-config "%PI_CODING_AGENT_DIR%\\extensions\\subagent\\config.json"' in line, script

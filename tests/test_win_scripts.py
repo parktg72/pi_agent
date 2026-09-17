@@ -1152,7 +1152,7 @@ def test_start_pi_passes_the_pi_exit_code_through_unchanged():
     body = read("start-pi.bat")
     launch = (
         '"%ROOT%bin\\pi\\pi.exe" --offline --model "%PI_MODEL_ID%" '
-        '--thinking "%PI_THINKING%" %PROMPT_ARG% %*'
+        '--thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %*'
     )
     assert launch in body
     after = body[body.index(launch) + len(launch) :]

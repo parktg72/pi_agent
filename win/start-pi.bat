@@ -52,7 +52,7 @@ rem provider timeout. Pi's defaults (16384, 5 minutes, SDK 10 minutes) stop long
 rem work on 3x 1080 Ti: prefill of a long history sends no body bytes for
 rem minutes, and overflow recovery runs only once per run. Other keys and larger
 rem values the operator set are kept. Rationale: tools\pi_settings.py.
-%PYTHON_CMD% "%ROOT%tools\pi_settings.py" --settings "%PI_CODING_AGENT_DIR%\settings.json" --ctx "%LLAMA_CTX%"
+%PYTHON_CMD% "%ROOT%tools\pi_settings.py" --settings "%PI_CODING_AGENT_DIR%\settings.json" --ctx "%LLAMA_CTX%" --subagent-config "%PI_CODING_AGENT_DIR%\extensions\subagent\config.json"
 if errorlevel 1 exit /b 10
 
 %PYTHON_CMD% "%ROOT%tools\wait_model.py" --base-url "%LLAMA_BASE_URL%" --alias "%MODEL_ALIAS%" --timeout %MODEL_LOAD_TIMEOUT%
@@ -91,7 +91,13 @@ rem template is read straight from the hashed bundle root, so nothing is copied
 rem into home\agent and there is no sync step to go stale.
 set "PROMPT_ARG="
 if exist "%ROOT%pi-prompts\retro.md" set PROMPT_ARG=--prompt-template "%ROOT%pi-prompts\retro.md"
-"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %*
+rem learning extension: learned-rule memory injected every turn, remember_rule /
+rem package_skill tools, /reflect, and approved skills as one-call tools. Loaded
+rem from the hashed bundle root; its data lives under home\agent and .pi\.
+rem LEARNING_AUTO_REFLECT from config.env reaches it through the environment.
+set "EXT_ARG="
+if exist "%ROOT%pi-extensions\learning.ts" set EXT_ARG=--extension "%ROOT%pi-extensions\learning.ts"
+"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %*
 exit /b %errorlevel%
 
 :place_models_json

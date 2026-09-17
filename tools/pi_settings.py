@@ -16,7 +16,12 @@ Pi 0.85.1이 긴 작업을 멈추는 경로를 소스에서 추적했다(2026-09
 4. retry.provider.timeoutMs가 없으면 OpenAI SDK 기본 10분(DEFAULT_TIMEOUT=6e5)이다.
    --parallel 1이라 다른 요청 뒤에 줄을 서면 헤더 전에 그 시간을 다 쓸 수 있다.
 
-그래서 매 실행마다 네 값의 **하한**(reserveTokens는 창 절반의 상한도)을 맞춘다. settings.json은 운영자가 /settings로
+5. pi-subagents는 asyncByDefault가 켜져 있으면 async를 생략한 위임을 백그라운드로 돌린다
+   (pi-subagents docs/configuration.md). start-llama.bat은 --parallel 1이라 부모와 자식이 한
+   슬롯을 번갈아 쓰며 서로의 KV를 밀어내 긴 prefill을 반복하고 대기열에서 타임아웃될 수 있다.
+
+그래서 매 실행마다 네 값의 **하한**(reserveTokens는 창 절반의 상한도)을 맞추고, pi-subagents
+설정 파일에 asyncByDefault가 없으면 false를 넣는다(운영자가 적은 값은 그대로 둔다). settings.json은 운영자가 /settings로
 고치는 파일이라 덮어쓰지 않는다 - 더 큰 값, 다른 키, 운영자가 끈 유휴 타임아웃(0)은
 그대로 둔다. 하한보다 작은 값만 올리고, 무엇을 바꿨는지 출력한다.
 """
@@ -113,10 +118,35 @@ def apply(settings: dict, ctx: int) -> tuple[dict, list[str]]:
     return settings, changes
 
 
+def ensure_subagent_config(path: Path) -> int:
+    """pi-subagents 설정에 asyncByDefault가 없을 때만 false를 넣는다."""
+    current: dict = {}
+    if path.is_file():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8-sig"))
+        except ValueError as error:
+            print(f"[FAIL] {path}가 JSON이 아니다 - 고치거나 지운 뒤 다시 실행하라: {error}", file=sys.stderr)
+            return 1
+        if not isinstance(current, dict):
+            print(f"[FAIL] {path}의 최상위가 객체가 아니다", file=sys.stderr)
+            return 1
+    if "asyncByDefault" in current:
+        return 0
+    current["asyncByDefault"] = False
+    try:
+        write_atomic(path, json.dumps(current, indent=2, ensure_ascii=True) + "\n")
+    except OSError as error:
+        print(f"[FAIL] {path}를 쓰지 못했다: {error}", file=sys.stderr)
+        return 1
+    print("[info] pi-subagents asyncByDefault: (없음) -> false  (--parallel 1 단일 슬롯)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pi_settings", description=__doc__)
     parser.add_argument("--settings", required=True, type=Path)
     parser.add_argument("--ctx", required=True)
+    parser.add_argument("--subagent-config", type=Path, default=None)
     arguments = parser.parse_args(argv)
 
     reason = _check_context(arguments.ctx)
@@ -135,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(current, dict):
             print(f"[FAIL] {arguments.settings}의 최상위가 객체가 아니다", file=sys.stderr)
             return 1
+
+    if arguments.subagent_config is not None and ensure_subagent_config(arguments.subagent_config):
+        return 1
 
     updated, changes = apply(current, ctx)
     if not changes and arguments.settings.is_file():
