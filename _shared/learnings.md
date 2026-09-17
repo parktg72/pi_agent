@@ -98,3 +98,8 @@
 **교훈**: "산출물 = 실제 운영 입력과 같다"를 검증할 때는 **운영과 같은 구성 전체**(패키지·플러그인 포함)로 한 번 더 돌린다. 최소 구성 stub 실측에서 요청 4건이 글자 단위로 일치해 끝난 것으로 보였지만, 번들 패키지를 모두 실은 구성으로 다시 돌리자 한 패키지가 요청에만 끼우는 메시지 때문에 4건 모두 어긋났다. 또 동등성 검증은 "문자열 렌더 비교"처럼 **소비자(템플릿)가 실제로 보는 형태**로 해야 형식 차이(문자열 vs 파트 배열)에 속지 않는다. 리뷰 pane 두 곳이 같은 설계 결함(세션 중 조건 변경을 마지막 스냅샷으로 덮음)을 독립 지적한 것은 채택했고, 이전 라운드와 같은 반박 불가 재지적은 근거와 함께 불채택을 유지했다.
 **근거**: `tasks/pi-agent-lora-upgrade/artifacts/export-v2-probe/`(run.bat·run_full.bat·verify_render.py), log.md 21:15 [ERROR]·[VERIFICATION].
 **worker**: orchestrator(설계·구현·실측), herdr pane agy·opencode(설계·코드 리뷰)
+
+## [2026-09-17] [pi-agent-lora-upgrade C단계]
+**교훈**: "학습 입력 = 추론 입력" 같은 동등성은 **실제 소비 엔진**으로 대조해야 한다. B단계는 양쪽을 같은 jinja2로 렌더해 일치를 확인했지만, C단계에서 실제 추론 엔진(llama-server의 minja + 요청 정규화)에 `/apply-template`·`/tokenize`로 물어보자 서버가 도구 정의의 필드를 버리는 차이가 나왔다. 대리 구현으로 한 검증은 "대리끼리 같다"만 증명한다. 또 리뷰 pane이 "첫 스텝에서 크래시"라고 단언한 것은 같은 클래스·버전의 초소형 모델 실측으로 반박됐고, 다른 pane의 "과금 종료·checkpoint 회수 불완전" 지적 8건은 대부분 유효해 가짜 CLI 테스트와 함께 고쳤다 — 유료 자원을 쓰는 스크립트는 실패·중단 경로를 모의 도구로 먼저 돌린다.
+**근거**: tasks/pi-agent-lora-upgrade/artifacts/c-probe/template_parity.py, tests/test_colab_lora_run.py, log.md C단계 항목.
+**worker**: orchestrator(구현·실측), herdr pane agy·opencode(R1·R2 합의, 코드 리뷰)
