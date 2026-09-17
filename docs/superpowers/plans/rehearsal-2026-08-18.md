@@ -667,16 +667,18 @@ memory.used.
 |---|---|---|---|---|
 | 11-1 | b11010 CUDA 기동 | §3 관문 ① 그대로 | 3장 인식·전 층 GPU·`/v1/models` alias | |
 | 11-2 | `-fa auto` on Pascal | 기동 로그의 `flash_attn` 줄 | `enabled`. `not supported, set to disabled`이면 스펙 §14.4 판단이 틀린 것 — 그 줄과 앞뒤 경고를 기록 | |
-| 11-3 | contextWindow 렌더링 | `home\agent\models.json`의 `contextWindow` | `config.env` `LLAMA_CTX`와 같다 | |
+| 11-3 | contextWindow 렌더링 | `home\agent\models.json`의 `contextWindow` | `config.env` `LLAMA_CTX`(63488)와 같고, llama-server 기동 로그 `n_ctx`도 같은 값이다 | |
 | 11-4 | 백그라운드 서브에이전트 | Pi에서 `subagent` 툴을 async/background로 1회 위임 | `ENOENT` 없이 완료. 실패면 로그 원문 기록 | |
-| 11-5 | 컨텍스트 65536 VRAM | Q6_K(기본), KV f16, mmproj 켠 상태 | 3장 모두 OOM 없음, 각 장 memory.used 기록 | |
+| 11-5 | 컨텍스트 63488(62k) VRAM | Q6_K(기본), KV f16, mmproj 켠 상태 | 3장 모두 OOM 없음, 각 장 memory.used 기록 | |
 | 11-6 | KV q8_0 | `LLAMA_KV_TYPE=q8_0` | VRAM 감소량, 툴 왕복 통과, 토큰/초 변화 | |
 | 11-7 | RAM 프롬프트 캐시 | `LLAMA_CACHE_RAM_MIB=32768`에서 본 세션 → 서브에이전트 1회 → 본 세션 다음 턴 | 다음 턴 prompt eval 토큰 수가 전체 이력보다 작다(캐시 적중) | |
 | 11-8 | MTP A/B | `LLAMA_SPEC_MTP=0` vs `1`, 같은 긴 생성 | 1이 eval tokens/s에서 이기고 툴 왕복이 통과할 때만 기본값을 1로 바꾼다 | |
-| 11-9 | Q6_K 기본값 | 기본 `config.env`(Q6_K, KV f16, 65536) 그대로 §3 관문 ① | 3장 모두 OOM 없음, 장별 memory.used·eval tokens/s 기록. OOM이면 `LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf` 순으로 내려가며 각 단계 값을 기록. Q4_K_M 토큰/초도 한 번 재서 차이를 적는다 | |
+| 11-9 | Q6_K 기본값 | 기본 `config.env`(Q6_K, KV f16, 63488) 그대로 §3 관문 ① | 3장 모두 OOM 없음, 장별 memory.used·eval tokens/s 기록. OOM이면 `LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf` 순으로 내려가며 각 단계 값을 기록. Q4_K_M 토큰/초도 한 번 재서 차이를 적는다 | |
 | 11-10 | `llama-fit-params.exe` | README 2단계 명령 | 실행 가능 여부(Device Guard 차단 여부)와 출력 `-ts` | |
 | 11-11 | `/retro` 템플릿 | Pi에서 `/retro` 입력 | 자동완성에 뜨고, 파일을 쓰지 않고 제안만 출력 | |
 | 11-12 | L2 추출 | `lora\approved.txt`에 실제 세션 ID 1개 → `export-sessions.bat` | exit 0, `lora\train.jsonl` 줄 수 1, 한글 사유·마스킹 건수가 깨지지 않고 출력 | |
+| 11-14 | TDR(드라이버 재시작) 여부 | 11-5의 긴 프롬프트(약 8천 토큰) 처리 중 화면 깜빡임·이벤트 뷰어 `nvlddmkm` 4101 확인 | 없음. 있으면 `LLAMA_UBATCH=256`→`128`로 재시험해 prefill tokens/s와 함께 기록(기본값 변경 근거가 된다) | |
+| 11-15 | 긴 이력 prefill·압축 | 약 4만 토큰짜리 대화(큰 파일 여러 개 읽기)로 압축 임계를 넘긴 뒤 한 턴 더 | llama-server 로그의 prompt eval tokens/s와 prefill 소요 시간 기록, Pi가 타임아웃 없이 압축·계속 진행. 30분(`httpIdleTimeoutMs`)에 근접하면 기록하고 보고 | |
 
 ### 11-13. LoRA 학습 스택(L3) — 반입을 결정한 경우에만
 
