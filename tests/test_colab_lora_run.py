@@ -30,7 +30,7 @@ cmd = args[0]
 sessions = state / "sessions.json"
 active = json.loads(sessions.read_text()) if sessions.exists() else []
 if cmd == "sessions":
-    print("\n".join(f"[x] {s} | Hardware: H100" for s in active) if active else "[colab] No active sessions found on server.")
+    print("\n".join(f"[{s}] endpoint-{s} | Hardware: H100" for s in active) if active else "[colab] No active sessions found on server.")
 elif cmd == "new":
     active.append(args[args.index("-s") + 1]); sessions.write_text(json.dumps(active)); remote.mkdir(exist_ok=True)
 elif cmd == "status":
@@ -124,8 +124,8 @@ def calls(env):
     return (env["state"] / "calls.log").read_text().splitlines() if (env["state"] / "calls.log").exists() else []
 
 
-def session_closed(env):
-    return json.loads((env["state"] / "sessions.json").read_text()) == []
+def session_closed(env, name="pi-lora"):
+    return name not in json.loads((env["state"] / "sessions.json").read_text())
 
 
 def test_success_downloads_split_adapter_verifies_hash_and_stops(env):
@@ -226,3 +226,19 @@ def test_a_substituted_gpu_stops_before_uploading(env):
     assert "L4" in res.stderr
     assert not any(c.startswith("upload") for c in calls(env))
     assert any(c.startswith("stop") for c in calls(env)) and session_closed(env)
+
+
+def test_other_sessions_need_explicit_permission_and_are_left_alone(env):
+    (env["state"] / "sessions.json").write_text(json.dumps(["browser-runtime"]))
+    assert run(env).returncode == 66
+    res = run(env, ALLOW_OTHER_SESSIONS="1")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert json.loads((env["state"] / "sessions.json").read_text()) == ["browser-runtime"]
+    assert "세션 종료 확인" in res.stderr
+
+
+def test_a_leftover_session_with_our_name_is_refused_even_when_others_are_allowed(env):
+    (env["state"] / "sessions.json").write_text(json.dumps(["pi-lora"]))
+    res = run(env, ALLOW_OTHER_SESSIONS="1")
+    assert res.returncode == 66
+    assert "같은 이름" in res.stderr

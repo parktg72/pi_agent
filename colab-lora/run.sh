@@ -111,9 +111,14 @@ if [[ -n "${RESUME_FROM:-}" ]] && [[ "$MODE" != train || ! -f "$RESUME_FROM/stat
 fi
 say "데이터 sha256 일치 $data_sha ($(wc -l < "$DATA") 샘플), 마감 $(date -d "@$deadline" +%H:%M)"
 
+ours() { grep -q "^\[$SESSION\]" <<<"$1"; }  # colab sessions 줄: [로컬이름] endpoint | Hardware: ...
 existing=$("$COLAB" sessions 2>&1 || true)
-if ! grep -q "No active sessions" <<<"$existing"; then
-  say "[FAIL] 이미 Colab 세션이 있다 - 먼저 정리하라:"$'\n'"$existing"
+if ours "$existing"; then
+  say "[FAIL] 같은 이름의 Colab 세션($SESSION)이 이미 있다 - 이전 실행이 남긴 것인지 확인하고 정리하라:"$'\n'"$existing"
+  exit 66
+fi
+if ! grep -q "No active sessions" <<<"$existing" && [[ "${ALLOW_OTHER_SESSIONS:-0}" != 1 ]]; then
+  say "[FAIL] 다른 Colab 세션이 있다(브라우저 런타임 등) - 정리하거나, 이 실행과 무관하면 ALLOW_OTHER_SESSIONS=1:"$'\n'"$existing"
   exit 66
 fi
 
@@ -126,8 +131,8 @@ cleanup() {
     printf 'import shutil, os\nshutil.rmtree("%s", ignore_errors=True)\nshutil.rmtree("/content/verify-cache", ignore_errors=True)\nshutil.rmtree(os.path.expanduser("~/.cache/huggingface"), ignore_errors=True)\nprint("wiped")\n' "$REMOTE" \
       | "$COLAB" exec -s "$SESSION" --timeout 300 >>"$LOG" 2>&1 || say "[warn] VM 파일 삭제 실패 - stop으로 VM이 사라지면 함께 지워진다"
     "$COLAB" stop -s "$SESSION" >>"$LOG" 2>&1 || true
-    if "$COLAB" sessions 2>&1 | grep -q "No active sessions"; then
-      say "세션 종료 확인"
+    if ! ours "$("$COLAB" sessions 2>&1 || true)"; then
+      say "세션 종료 확인($SESSION이 서버 목록에 없음)"
     else
       say "[FAIL] 세션이 아직 서버에 있다 - 'colab sessions' 확인 후 수동으로 stop 하라"
       rc=70
@@ -143,7 +148,7 @@ trap 'exit 130' INT TERM
 
 say "세션 생성: $SESSION --gpu $GPU (마감까지 ${WALL_MIN}분)"
 created=1  # 생성 응답이 실패해도 서버에는 만들어졌을 수 있다 - 정리 대상으로 둔다
-setsid bash -c "sleep $(( WALL_SEC + 600 )); if ! \"\$1\" sessions 2>&1 | grep -q 'No active sessions'; then \"\$1\" stop -s \"\$2\"; fi" _ "$COLAB" "$SESSION" >>"$LOG" 2>&1 < /dev/null &
+setsid bash -c "sleep $(( WALL_SEC + 600 )); if \"\$1\" sessions 2>&1 | grep -q \"^\\[\$2\\]\"; then \"\$1\" stop -s \"\$2\"; fi" _ "$COLAB" "$SESSION" >>"$LOG" 2>&1 < /dev/null &
 watchdog=$!
 timeout 900 "$COLAB" new -s "$SESSION" --gpu "$GPU" >>"$LOG" 2>&1
 hardware=$("$COLAB" status -s "$SESSION" 2>&1 || true)
