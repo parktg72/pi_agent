@@ -8,7 +8,8 @@
 - 스텝 = 대상 토큰이 --target-tokens-per-step에 이를 때까지 모은 시퀀스 묶음. 손실은 묶음의 대상 토큰 평균.
 - checkpoint(어댑터+optimizer+scheduler+RNG+진행 위치)를 --checkpoint-minutes마다, 그리고 --time-limit-min 직전에 남긴다.
   시간 상한에 걸리면 checkpoint를 남기고 종료코드 5로 끝난다(자동 연장 없음, 합의 10).
-- --trial: 짧은 시퀀스 1스텝 → 가장 긴 시퀀스 1스텝 → checkpoint 저장 → 재개 → 1스텝. 피크 메모리·처리량을 보고한다(합의 12).
+- --trial: 짧은 시퀀스 1스텝 → 긴 시퀀스부터 내려가며 OOM이 아닌 첫 길이(최대 학습 가능 길이) → 대상 토큰이 가장 많은
+  시퀀스 → checkpoint 저장·재개 → 1스텝. 길이별 OOM·피크 메모리·처리량을 보고한다(합의 12, A100 40GB 대응).
 
 산출: <out>/adapter/(PEFT safetensors, 반입 변환용), <out>/report.json, <out>/DONE(성공 표식), 로그는 표준출력 JSON 줄.
 """
@@ -19,6 +20,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import platform
 import random
 import sys
@@ -297,83 +299,137 @@ def main(argv=None) -> int:
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0)
 
-    if args.trial:
-        # 짧은 시퀀스 → 가장 긴 시퀀스(활성 메모리) → 대상 토큰이 가장 많은 시퀀스(lm_head 손실 경로) → 재개 뒤 짧은 시퀀스
-        ordered = sorted(range(len(train_seqs)), key=lambda i: len(train_seqs[i].input_ids))
-        most_targets = max(range(len(train_seqs)), key=lambda i: train_seqs[i].target_tokens)
-        steps = [[ordered[0]], [ordered[-1]], [most_targets], [ordered[0]]]
-    else:
-        steps = plan_steps(train_seqs, args.target_tokens_per_step, args.seed, args.epochs)
-        if args.max_steps:
-            steps = steps[:args.max_steps]
-    # 시험은 몇 스텝뿐이라 warmup을 두면 첫 스텝 lr이 0이 돼 갱신 검사가 무의미해진다.
-    warmup = 0 if args.trial else math.ceil(len(steps) * args.warmup_ratio)
-    scheduler = get_cosine_schedule_with_warmup(optimizer, warmup, len(steps))
-    ckpt = args.out / "checkpoint"
-    if args.resume and not (ckpt / "state.pt").exists():
-        log("fail", reason="--resume인데 checkpoint가 없다", path=str(ckpt))
-        return 6
-    step = load_checkpoint(ckpt, model, optimizer, scheduler, fingerprint) if args.resume else 0
+    probe_name = next(n for n, p in model.named_parameters() if p.requires_grad and "lora_B" in n)
+    fake_oom_over = int(os.environ.get("TRAIN_FAKE_OOM_OVER", "0"))  # CPU 시험용: 이 길이를 넘는 시퀀스에서 OOM을 흉내 낸다
 
-    eval_before = None if args.trial else evaluate(model, eval_seqs, args.device, args.lm_head_chunk)
-    log("eval", when="before", loss=eval_before)
-    model.train()
-    last_ckpt = time.time()
-    trial_marks = {}
-    while step < len(steps):
-        if args.time_limit_min and time.time() - started > args.time_limit_min * 60:
-            save_checkpoint(ckpt, model, optimizer, scheduler, step, fingerprint)
-            log("stop", reason="시간 상한", step=step, total=len(steps))
-            return EXIT_TIME_LIMIT
+    def do_step(indices: list[int], total: int) -> dict:
+        """한 optimizer 스텝. 실패면 {"fail": 이유}. OOM은 호출자가 잡는다."""
         tick = time.time()
-        batch = [train_seqs[i] for i in steps[step]]
+        batch = [train_seqs[i] for i in indices]
         step_targets = sum(s.target_tokens for s in batch)
-        loss_sum = 0.0
-        probe_name = next(n for n, p in model.named_parameters() if p.requires_grad and "lora_B" in n)
         probe_before = model.get_parameter(probe_name).detach().clone()
+        loss_sum = 0.0
         for sequence in batch:
+            if fake_oom_over and len(sequence.input_ids) > fake_oom_over:
+                raise torch.OutOfMemoryError(f"fake OOM at {len(sequence.input_ids)} tokens")
             loss, _ = sequence_loss(model, sequence, args.device, args.lm_head_chunk)
             (loss / step_targets).backward()
             loss_sum += loss.detach().item()
         grad_norm = float(torch.nn.utils.clip_grad_norm_(params, 1.0))
         if not math.isfinite(loss_sum) or not math.isfinite(grad_norm):
-            log("fail", reason="loss 또는 grad가 유한하지 않다", step=step, loss=loss_sum, grad_norm=grad_norm)
-            return 4
+            return {"fail": "loss 또는 grad가 유한하지 않다", "loss": loss_sum, "grad_norm": grad_norm}
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad(set_to_none=True)
         if args.trial and torch.equal(probe_before, model.get_parameter(probe_name).detach()):
-            log("fail", reason="optimizer step 뒤에도 LoRA 가중치가 그대로다", step=step + 1, grad_norm=grad_norm)
-            return 4
+            return {"fail": "optimizer step 뒤에도 LoRA 가중치가 그대로다", "grad_norm": grad_norm}
         seconds = time.time() - tick
         tokens = sum(len(s.input_ids) for s in batch)
-        step += 1
+        metrics = {"total": total, "loss": round(loss_sum / step_targets, 4), "grad_norm": round(grad_norm, 4),
+                   "lr": scheduler.get_last_lr()[0], "tokens": tokens, "target_tokens": step_targets, "sec": round(seconds, 2),
+                   "tokens_per_sec": round(tokens / seconds, 1), "peak_gib": peak_memory_gib()}
         if fallback.messages and not args.allow_fallback:
-            log("fail", reason="Gated DeltaNet 커널 대신 torch 참조 구현이 쓰였다", fallback=sorted(set(fallback.messages)), step=step)
-            return 2
-        log("step", step=step, total=len(steps), loss=round(loss_sum / step_targets, 4), grad_norm=round(grad_norm, 4),
-            lr=scheduler.get_last_lr()[0], tokens=tokens, target_tokens=step_targets, sec=round(seconds, 2),
-            tokens_per_sec=round(tokens / seconds, 1), peak_gib=peak_memory_gib())
-        if args.trial and step == 2:
-            trial_marks["longest_tokens"] = tokens
-            trial_marks["longest_peak_gib"] = peak_memory_gib()
-        if args.trial and step == 3:
-            trial_marks["most_target_tokens"] = step_targets
-            trial_marks["most_targets_peak_gib"] = peak_memory_gib()
-            save_checkpoint(ckpt, model, optimizer, scheduler, step, fingerprint)
-            probe = model.get_parameter(next(n for n, p in model.named_parameters() if p.requires_grad and "lora_B" in n))
-            saved = probe.detach().clone()
-            with torch.no_grad():
-                probe.add_(1.0)  # 저장 뒤 값을 망가뜨리고 재개가 되돌리는지 본다
-            load_checkpoint(ckpt, model, optimizer, scheduler, fingerprint)
-            trial_marks["resume_restores_weights"] = bool(torch.equal(saved, probe.detach()))
-            if not trial_marks["resume_restores_weights"]:
-                log("fail", reason="checkpoint 재개가 LoRA 가중치를 되돌리지 못했다", step=step)
-                return 4
-            last_ckpt = time.time()
-        elif not args.trial and time.time() - last_ckpt > args.checkpoint_minutes * 60:
-            save_checkpoint(ckpt, model, optimizer, scheduler, step, fingerprint)
-            last_ckpt = time.time()
+            return {"fail": "Gated DeltaNet 커널 대신 torch 참조 구현이 쓰였다", "fallback": sorted(set(fallback.messages))}
+        return metrics
+
+    def recover_from_oom() -> None:
+        import gc
+
+        optimizer.zero_grad(set_to_none=True)
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def reset_peak() -> None:
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+
+    ckpt = args.out / "checkpoint"
+    trial_marks: dict = {}
+    eval_before = None
+    if args.trial:
+        # 짧은 시퀀스 → 긴 시퀀스부터 내려가며 OOM이 아닌 첫 길이를 찾는다(최대 학습 가능 길이) → 대상 토큰이 가장 많은
+        # 시퀀스(lm_head 손실 경로) → checkpoint 저장·망가뜨리기·재개 → 짧은 시퀀스. warmup 0(첫 스텝 lr이 0이면 갱신 검사가 무의미).
+        scheduler = get_cosine_schedule_with_warmup(optimizer, 0, 50)
+        ordered = sorted(range(len(train_seqs)), key=lambda i: len(train_seqs[i].input_ids))
+        if torch.cuda.is_available():
+            trial_marks["gpu_total_gib"] = round(torch.cuda.get_device_properties(0).total_memory / 2**30, 2)
+        step = 0
+
+        def trial_step(indices, label):
+            nonlocal step
+            reset_peak()
+            result = do_step(indices, 0)
+            if "fail" in result:
+                log("fail", step=step + 1, **result)
+                raise SystemExit(2 if "fallback" in result else 4)
+            step += 1
+            log("step", step=step, trial=label, **result)
+            return result
+
+        trial_step([ordered[0]], "short")
+        ladder, max_ok = [], len(train_seqs[ordered[0]].input_ids)
+        for index in reversed(ordered[1:]):
+            tokens = len(train_seqs[index].input_ids)
+            try:
+                result = trial_step([index], f"length {tokens}")
+            except torch.OutOfMemoryError as error:
+                recover_from_oom()
+                ladder.append({"tokens": tokens, "result": "oom"})
+                log("oom", tokens=tokens, error=str(error).splitlines()[0][:200])
+                continue
+            ladder.append({"tokens": tokens, "result": "ok", "peak_gib": result["peak_gib"], "tokens_per_sec": result["tokens_per_sec"]})
+            max_ok = tokens
+            break
+        trial_marks["length_ladder"] = ladder
+        trial_marks["max_ok_tokens"] = max_ok
+        most = max(range(len(train_seqs)), key=lambda i: train_seqs[i].target_tokens)
+        if len(train_seqs[most].input_ids) <= max_ok:
+            try:
+                result = trial_step([most], "most targets")
+                trial_marks["most_targets"] = {"target_tokens": result["target_tokens"], "tokens": result["tokens"], "peak_gib": result["peak_gib"]}
+            except torch.OutOfMemoryError as error:
+                recover_from_oom()
+                trial_marks["most_targets"] = {"result": "oom", "tokens": len(train_seqs[most].input_ids)}
+                log("oom", tokens=len(train_seqs[most].input_ids), error=str(error).splitlines()[0][:200])
+        save_checkpoint(ckpt, model, optimizer, scheduler, step, fingerprint)
+        probe = model.get_parameter(probe_name)
+        saved = probe.detach().clone()
+        with torch.no_grad():
+            probe.add_(1.0)  # 저장 뒤 값을 망가뜨리고 재개가 되돌리는지 본다
+        load_checkpoint(ckpt, model, optimizer, scheduler, fingerprint)
+        trial_marks["resume_restores_weights"] = bool(torch.equal(saved, probe.detach()))
+        if not trial_marks["resume_restores_weights"]:
+            log("fail", reason="checkpoint 재개가 LoRA 가중치를 되돌리지 못했다", step=step)
+            return 4
+        trial_step([ordered[0]], "after resume")
+    else:
+        steps = plan_steps(train_seqs, args.target_tokens_per_step, args.seed, args.epochs)
+        if args.max_steps:
+            steps = steps[:args.max_steps]
+        scheduler = get_cosine_schedule_with_warmup(optimizer, math.ceil(len(steps) * args.warmup_ratio), len(steps))
+        if args.resume and not (ckpt / "state.pt").exists():
+            log("fail", reason="--resume인데 checkpoint가 없다", path=str(ckpt))
+            return 6
+        step = load_checkpoint(ckpt, model, optimizer, scheduler, fingerprint) if args.resume else 0
+        eval_before = evaluate(model, eval_seqs, args.device, args.lm_head_chunk)
+        log("eval", when="before", loss=eval_before)
+        model.train()
+        last_ckpt = time.time()
+        while step < len(steps):
+            if args.time_limit_min and time.time() - started > args.time_limit_min * 60:
+                save_checkpoint(ckpt, model, optimizer, scheduler, step, fingerprint)
+                log("stop", reason="시간 상한", step=step, total=len(steps))
+                return EXIT_TIME_LIMIT
+            result = do_step(steps[step], len(steps))
+            if "fail" in result:
+                log("fail", step=step + 1, **result)
+                return 2 if "fallback" in result else 4
+            step += 1
+            log("step", step=step, **result)
+            if time.time() - last_ckpt > args.checkpoint_minutes * 60:
+                save_checkpoint(ckpt, model, optimizer, scheduler, step, fingerprint)
+                last_ckpt = time.time()
 
     eval_after = None if args.trial else evaluate(model, eval_seqs, args.device, args.lm_head_chunk)
     log("eval", when="after", loss=eval_after)

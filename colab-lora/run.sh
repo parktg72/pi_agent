@@ -194,7 +194,7 @@ run_job() {
     status=$(printf 'import os\nd = "%s"\nlog = open(d + "/%s.log").read() if os.path.exists(d + "/%s.log") else ""\nprint("LOGLEN", len(log))\nprint(log[%d:][-20000:], end="")\nprint("\\nEXIT", open(d + "/%s.exit").read().strip() if os.path.exists(d + "/%s.exit") else "RUNNING")\n' \
       "$REMOTE" "$name" "$name" "$seen" "$name" "$name" | remote_py 120 2>>"$LOG" || true)
     length=$(grep -o '^LOGLEN [0-9]*' <<<"$status" | head -1 | cut -d' ' -f2 || true)
-    sed -e '/^LOGLEN /d' -e '/^EXIT /d' <<<"$status" | tee -a "$WORK/$name.log" | grep -E '"event": "(start|data|model|eval|step|checkpoint|resumed|stop|fail|done|q6k|verify)"' | cut -c1-240 >&2 || true
+    sed -e '/^LOGLEN /d' -e '/^EXIT /d' <<<"$status" | tee -a "$WORK/$name.log" | grep -E '"event": "(start|data|model|eval|step|oom|checkpoint|resumed|stop|fail|done|q6k|verify)"' | cut -c1-240 >&2 || true
     [[ -n "$length" ]] && seen=$length
     job_rc=$(grep -o '^EXIT .*' <<<"$status" | tail -1 | cut -d' ' -f2 || true)
     if [[ -n "$job_rc" && "$job_rc" != RUNNING ]]; then

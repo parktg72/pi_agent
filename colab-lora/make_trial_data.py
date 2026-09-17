@@ -62,7 +62,9 @@ def main(argv=None) -> int:
     base = dataset.load_samples(args.base)[0]
     unit = len(encode(FILLER.format(i=12345)))
 
-    plans = [("short", None, None), ("prefix-32k", "prefix", 31000), ("prefix-62k", "prefix", 62000), ("targets-8k", "targets", 8000)]
+    # 길이 사다리: train.py --trial이 긴 것부터 내려가며 OOM이 아닌 첫 길이를 찾는다(A100 40GB 등 작은 GPU 대응).
+    plans = [("short", None, None), ("targets-8k", "targets", 8000)] + [
+        (f"prefix-{k}k", "prefix", k * 1000 - 1000) for k in (8, 12, 16, 20, 24, 32, 48, 63)]
     samples, rows = [], []
     for name, kind, goal in plans:
         units = 0
