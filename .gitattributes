@@ -11,3 +11,5 @@
 config.env -text
 config.env.example -text
 models.json text eol=lf
+# llama-server --chat-template-file로 읽는 템플릿. 바이트 그대로 둔다(매니페스트 해시 대상).
+*.jinja -text

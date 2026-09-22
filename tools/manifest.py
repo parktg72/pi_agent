@@ -50,6 +50,9 @@ EXCLUDED_ROOTS = (
     "tasks",
     "assets",
     ".claude",
+    # 지식그래프 스택 반입 원본(2026-09-22). 번들에 필요한 파일은 models/·packages_win/kg/·
+    # win/ 원본으로 옮겨 해시하므로, 원본 폴더를 또 해시하면 같은 20GB를 두 번 싣게 된다.
+    "폐쇄망지식그래프",
 )
 # config.env는 README와 리허설 절차서가 현장에서 채우라고 지시하는 파일이다.
 # 해시하면 지시를 따른 운영자에게 hash mismatch가 확정적으로 뜬다.

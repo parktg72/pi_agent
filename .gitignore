@@ -12,6 +12,13 @@ packages_win/py312/
 # 버전 관리 대상이 아니다. 매니페스트 해시 범위에는 그대로 남는다.
 packages_win/vcruntime/
 
+# 지식그래프(KG) 스택 반입 원본 폴더(2026-09-22 사용자 제공, 20GB). 번들은 이 폴더를
+# 쓰지 않고 아래 경로로 옮긴 사본을 쓴다 - 원본은 출처 기록으로 둔다.
+/폐쇄망지식그래프/
+# KG 휠하우스·tiktoken 원본 - packages_win/py312와 같은 이유(상류 배포물)로 추적하지 않는다.
+# 매니페스트 해시 범위에는 그대로 남는다.
+packages_win/kg/
+
 # 실행하면서 바뀌는 영역 — 매니페스트 해시 범위에서도 제외된다
 home/
 evidence/
@@ -44,6 +51,12 @@ STAGING_MANIFEST.json
 /pi-prompts/
 /pi-extensions/
 /export-sessions.bat
+/start-embedding.bat
+/install-kg.bat
+/start-lightrag.bat
+/pi-skills/
+/chat-templates/
+/kg/
 
 # SDD 작업 공간 (원장·브리프·리뷰 패키지)
 .superpowers/
