@@ -370,7 +370,9 @@ def test_start_pi_loads_the_graphify_skill_from_the_bundle_root():
 def test_the_sanitized_skill_is_reproducible_from_the_source(tmp_path):
     import sanitize_graphify_skill
 
-    assert sanitize_graphify_skill.main(["--src", str(KG_SOURCE / "05_skills" / "graphify"), "--dst", str(tmp_path / "g")]) == 0
+    wheel = ROOT / "packages_win" / "kg" / "wheelhouse" / "graphifyy-0.9.65-py3-none-any.whl"
+    extra = ["--license-wheel", str(wheel)] if wheel.is_file() else []
+    assert sanitize_graphify_skill.main(["--src", str(KG_SOURCE / "05_skills" / "graphify"), "--dst", str(tmp_path / "g"), *extra]) == 0
     shipped = WIN / "pi-skills" / "graphify"
     for path in sorted(shipped.rglob("*.md")):
         assert path.read_bytes() == (tmp_path / "g" / path.relative_to(shipped)).read_bytes(), path.name
@@ -558,3 +560,11 @@ def test_env_reading_uses_dotenv_with_lightrags_override_false(tmp_path, monkeyp
     env.write_text("X=1\n", encoding="utf-8")
     assert kg_budget.read_env_file(env) == {"SUMMARY_CONTEXT_SIZE": "12000"}
     assert seen.get("override") is False and seen.get("interpolate") is True
+
+
+
+def test_the_modified_graphify_skill_ships_its_apache_license_and_notice():
+    skill = WIN / "pi-skills" / "graphify"
+    assert "Apache License" in (skill / "LICENSE").read_text(encoding="utf-8")
+    assert (skill / "NOTICE").is_file()
+    assert "graphify" in (ROOT / "NOTICE").read_text(encoding="utf-8").lower()

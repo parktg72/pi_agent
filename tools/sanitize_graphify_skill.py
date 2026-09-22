@@ -207,6 +207,12 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="sanitize_graphify_skill")
     parser.add_argument("--src", type=Path, required=True, help="폐쇄망지식그래프/05_skills/graphify")
     parser.add_argument("--dst", type=Path, required=True, help="win/pi-skills/graphify")
+    parser.add_argument(
+        "--license-wheel",
+        type=Path,
+        default=None,
+        help="graphifyy 휠. 주면 그 안의 LICENSE·NOTICE를 사본 옆에 둔다(Apache-2.0 재배포 조건)",
+    )
     args = parser.parse_args(argv)
     src, dst = args.src, args.dst
     if dst.exists():
@@ -222,6 +228,13 @@ def main(argv: list[str]) -> int:
         elif ref.name == "exports.md":
             body = sanitize_exports(body)
         (dst / "references" / ref.name).write_text(explicit_graphify(quote_interpreter(body)), encoding="utf-8", newline="\n")
+    if args.license_wheel is not None:
+        import zipfile
+
+        with zipfile.ZipFile(args.license_wheel) as wheel:
+            for name in wheel.namelist():
+                if name.endswith(("/licenses/LICENSE", "/licenses/NOTICE")):
+                    (dst / name.rsplit("/", 1)[1]).write_bytes(wheel.read(name))
     print(f"[ok] {dst}")
     return 0
 
