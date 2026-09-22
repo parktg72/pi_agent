@@ -648,8 +648,12 @@ C:\pi_agent\start-lightrag.bat        :: 창 3 - LightRAG, WebUI http://127.0.0.
 
 `kg\lightrag.env` 는 요청 하나의 입력+출력이 슬롯(8192) 안에 들도록 상한을 둔다(추출 입력 4000,
 요약 입력 4000, 질의 전체 4000, 출력 2500). 라이브러리 기본값(`MAX_TOTAL_TOKENS` 30000 등)은 슬롯을
-넘는다. `KG_CTX`·`KG_PARALLEL` 을 바꾸면 이 값들도 같이 바꾼다. 추출은 사고를 끈다
-(`enable_thinking: false`). 품질 영향은 아직 재지 않았다.
+넘는다. `start-lightrag.bat` 은 기동 직전에 **실제로 적용될 값**(보존된 `home\kg\work\.env` +
+같은 이름의 환경변수, 없는 키는 라이브러리 기본값)을 떠 있는 LLM 서버의 슬롯 크기(`/props`)와
+대조해 넘치면 띄우지 않는다(`tools\kg_budget.py`, exit 3). `.env` 를 고쳤다면 이 검사가 알려 준다.
+LightRAG가 부를 서버 주소와 모델 이름은 `config.env` 의 `LLAMA_PORT`·`EMBED_PORT`·`MODEL_ALIAS` 로
+bat이 넣는다 — `.env` 의 같은 키보다 우선한다. 추출은 사고를 끈다(`enable_thinking: false`).
+품질 영향은 아직 재지 않았다.
 
 임베딩 서버의 벡터 길이가 **1024** 인지 확인한다(`EMBEDDING_DIM` 과 같아야 인덱싱이 깨지지 않는다):
 
@@ -663,6 +667,10 @@ Pi 세션에서 `/skill:graphify <폴더>` 로 부른다(`start-pi.bat` 이 `--s
 tree-sitter AST로 로컬 파싱하므로 LLM을 쓰지 않는다. 문서·PDF·이미지의 의미 추출은 지금 도는
 Pi(로컬 llama-server)가 한다. 폐쇄망판에서는 GitHub clone, `pip`/`uv` 설치, Gemini API,
 Whisper 전사, `graphify add <url>`, Neo4j/FalkorDB push를 지웠다(`tools\sanitize_graphify_skill.py`).
+graphify는 PATH가 아니라 번들 venv(`home\kg\venv\Scripts\python.exe -m graphify`)로만 부른다 — 이 PC에
+다른 graphify가 있어도 섞이지 않는다. graphify가 만든 HTML(`graph.html` 등)은 그래프 라이브러리를
+CDN에서 받게 돼 있어서, 스킬이 `tools\graphify_offline_html.py` 로 번들의 고정 사본(vis-network 9.1.6,
+d3 7.9.0, mermaid 11.17.2 — `packages_win\kg\web\`)을 가리키게 바꾼다.
 **`GEMINI_API_KEY`·`GOOGLE_API_KEY` 는 설정하지 않는다** — 설정하면 graphify가 외부 API를 부른다.
 
 ### 확인할 것

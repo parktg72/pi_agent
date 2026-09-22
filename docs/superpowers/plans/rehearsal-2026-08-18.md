@@ -666,14 +666,14 @@ memory.used.
 | # | 확인 | 방법 | 통과 기준 | 기록 |
 |---|---|---|---|---|
 | 11-1 | b11010 CUDA 기동 | §3 관문 ① 그대로 | 3장 인식·전 층 GPU·`/v1/models` alias | |
-| 11-2 | `-fa auto` on Pascal | 기동 로그의 `flash_attn` 줄 | `enabled`. `not supported, set to disabled`이면 스펙 §14.4 판단이 틀린 것 — 그 줄과 앞뒤 경고를 기록 | |
+| 11-2 | flash attention off/auto A/B (2026-09-22 갱신) | `LLAMA_FLASH_ATTN=auto`(기본)와 `off`로 각각 §3 관문 ① + 11-5 긴 프롬프트 | auto: 기동 로그 `flash_attn` 줄이 `enabled`인지(`not supported, set to disabled`이면 스펙 §14.4·§14.8 판단이 틀린 것 — 그 줄과 앞뒤 경고 기록). 두 값의 장별 memory.used·prompt eval/eval tokens/s를 기록하고 OOM 없는 쪽 중 빠른 값을 기본으로 | |
 | 11-3 | contextWindow 렌더링 | `home\agent\models.json`의 `contextWindow` | `config.env` `LLAMA_CTX`(63488)와 같고, llama-server 기동 로그 `n_ctx`도 같은 값이다 | |
 | 11-4 | 백그라운드 서브에이전트 | Pi에서 `subagent` 툴을 async/background로 1회 위임 | `ENOENT` 없이 완료. 실패면 로그 원문 기록 | |
 | 11-5 | 컨텍스트 63488(62k) VRAM | Q6_K(기본), KV f16, mmproj 켠 상태 | 3장 모두 OOM 없음, 각 장 memory.used 기록 | |
 | 11-6 | KV q8_0 | `LLAMA_KV_TYPE=q8_0` | VRAM 감소량, 툴 왕복 통과, 토큰/초 변화 | |
 | 11-7 | RAM 프롬프트 캐시 | `LLAMA_CACHE_RAM_MIB=32768`에서 본 세션 → 서브에이전트 1회 → 본 세션 다음 턴 | 다음 턴 prompt eval 토큰 수가 전체 이력보다 작다(캐시 적중) | |
 | 11-8 | MTP A/B | `LLAMA_SPEC_MTP=0` vs `1`, 같은 긴 생성 | 1이 eval tokens/s에서 이기고 툴 왕복이 통과할 때만 기본값을 1로 바꾼다 | |
-| 11-9 | Q6_K 기본값 | 기본 `config.env`(Q6_K, KV f16, 63488) 그대로 §3 관문 ① | 3장 모두 OOM 없음, 장별 memory.used·eval tokens/s 기록. OOM이면 `LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf` 순으로 내려가며 각 단계 값을 기록. Q4_K_M 토큰/초도 한 번 재서 차이를 적는다 | |
+| 11-9 | UD-Q5_K_M 기본값 (2026-09-22 갱신) | 기본 `config.env`(UD-Q5_K_M, K q8_0/V f16, 63488, ub 256, ts 10,11,8, 고정 템플릿) 그대로 §3 관문 ① | 3장 모두 OOM 없음, 장별 memory.used·eval tokens/s 기록. `start-pi.bat`의 `/props` 확인이 `[ok] ... 고정 템플릿 일치`. OOM이면 `LLAMA_CTX=49152` → `LLAMA_UBATCH=128` → `MODEL_FILE=Q4_K_M` 순서. Q6_K(백업)도 같은 방법으로 1회 기록 | |
 | 11-10 | `llama-fit-params.exe` | README 2단계 명령 | 실행 가능 여부(Device Guard 차단 여부)와 출력 `-ts` | |
 | 11-11 | `/retro` 템플릿 | Pi에서 `/retro` 입력 | 자동완성에 뜨고, 파일을 쓰지 않고 제안만 출력 | |
 | 11-12 | L2 추출 | `start-pi.bat`으로 새로 기록한 실제 세션 ID 1개(도구 호출 포함)를 `lora\approved.txt`에 → `export-sessions.bat` | exit 0, `lora\train.jsonl` 줄 수 ≥ 1(규칙·도구·사고 수준이 바뀐 만큼 구간), 각 줄에 `tools`·`chat_template_kwargs`·`train_indices`, 첫 줄 `messages[1]`이 superpowers `<EXTREMELY_IMPORTANT>` 안내문(보고서 "주입 메시지" 1), `lora\train.report.md`의 sha256 = `certutil -hashfile lora\train.jsonl SHA256`, 한글 사유·마스킹 건수가 깨지지 않고 출력. 이 번들 이전 세션은 "요청 스냅샷 없음"으로 제외되는 것이 정상. **추가 확인**: 그 세션 파일에서 assistant `thinking` 블록의 `thinkingSignature`가 `reasoning_content`인지(stub 실측은 이 필드를 가정했다). 아니고 본문(`text`)에 `<think>`·`</think>`가 섞여 있으면 llama-server 추론 형식 설정부터 고친 뒤 데이터를 모은다 | |
@@ -681,6 +681,11 @@ memory.used.
 | 11-15 | 긴 이력 prefill·압축 | 약 4만 토큰짜리 대화(큰 파일 여러 개 읽기)로 압축 임계를 넘긴 뒤 한 턴 더 | llama-server 로그의 prompt eval tokens/s와 prefill 소요 시간 기록, Pi가 타임아웃 없이 압축·계속 진행. 30분(`httpIdleTimeoutMs`)에 근접하면 기록하고 보고. **이어서** 그 세션 ID로 `export-sessions.bat` → 압축 뒤 구간이 샘플로 나오고("firstKeptEntryId 없음"으로 제외되지 않음) 그 샘플 `messages`의 첫 user가 "The conversation history before this point was compacted…" 요약이다(실제 compaction 엔트리 형식은 아직 소스로만 확인) | |
 | 11-16 | 학습 확장 대화형 경로 | Pi 대화형에서 (a) 작업 뒤 `/reflect` (b) 스킬이 만들어지면 `/skills-pending`→`/skill-approve <이름>` (c) 도구 8회 이상 작업 뒤 자동 반성 (d) `/rules`·`/forget` | (a) 저장 알림이 뜨고 규칙 ≤2 (b) 확인창에 스크립트 본문·위험 경고가 보이고 승인 후 `skill_*` 도구가 바로 쓰임 (c) 한 번만 돌고 프로젝트 규칙만 저장, 소요 시간 기록 (d) 번호로 지워짐 | |
 | 11-17 | 요청 기본 크기 | 새 세션 첫 턴의 llama-server `prompt eval` 토큰 수와 시간 | 약 13k 토큰(스펙 §14.7 추정치)과 비교 기록 — `pi-subagents` 유지 여부 판단 근거 | |
+| 11-18 | KG 설치 (2026-09-22) | 인터넷 차단 상태에서 `install-kg.bat` | exit 0, `evidence\install-kg-pipcheck.txt` 문제 없음, `[ok] imports; tiktoken offline tokens` 출력. 실패 시 exit 코드와 evidence 파일 기록 | |
+| 11-19 | kg 프로파일 + 임베딩 동시 기동 | `start-llama.bat kg` + `start-embedding.bat` | 두 서버 모두 OOM 없음, GPU 2의 memory.used(LLM 몫 + bge-m3) 기록, `/v1/embeddings` 벡터 길이 1024, `netstat`로 8080·8081·9621이 127.0.0.1에만 바인딩 | |
+| 11-20 | Pi 차단 | kg 프로파일 서버가 뜬 상태에서 `start-pi.bat` | exit 11과 "슬롯이 4개" 메시지. Pi 프로파일로 다시 띄우면 통과 | |
+| 11-21 | LightRAG 왕복 | `start-lightrag.bat` → 작은 문서 1건 인덱싱 → 질의 1회 | 슬롯 초과(context length) 오류 없음, `rag_storage\graph_chunk_entity_relation.graphml` 생성, gleaning 건너뜀 경고 수 기록, 방화벽 아웃바운드 차단 상태에서 외부 접속 시도 없음 | |
+| 11-22 | graphify | Pi에서 `/skill:graphify <작은 코드 폴더>` → `graphify-out\graph.html`을 브라우저로 열기 | 그래프가 그려진다(오프라인 사본 참조 — `graphify_offline_html.py` [ok]), `GRAPH_REPORT.md` 생성, 외부 요청 없음 | |
 
 ### 11-13. LoRA 학습 스택(L3) — 반입을 결정한 경우에만
 

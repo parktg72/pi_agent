@@ -408,6 +408,21 @@ def test_a_local_copy_with_the_wrong_hash_is_refused(tmp_path):
     problems = graphify_offline_html.process([out], web=web)
     assert any("sha256" in problem for problem in problems)
     assert not (out / "d3-7.9.0.min.js").exists()
+    # 검증이 실패하면 HTML을 건드리지 않는다 - 외부 URL이 남아야 다음 실행이 다시 검사한다.
+    assert "https://d3js.org/d3.v7.min.js" in (out / "tree.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not graphify_offline_html.WEB.is_dir(), reason="packages_win/kg/web은 gitignore - 스테이징 PC에만 있다")
+def test_a_rerun_rechecks_and_restores_local_copies(tmp_path):
+    page = tmp_path / "graph.html"
+    page.write_text('<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>', encoding="utf-8")
+    assert graphify_offline_html.process([tmp_path]) == []
+    copy = tmp_path / "vis-network-9.1.6.min.js"
+    assert copy.is_file()
+    copy.write_text("tampered", encoding="utf-8")
+    assert graphify_offline_html.process([tmp_path]) == []
+    expected = graphify_offline_html.KNOWN["https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"][1]
+    assert hashlib.sha256(copy.read_bytes()).hexdigest() == expected
 
 
 @pytest.mark.skipif(not graphify_offline_html.WEB.is_dir(), reason="packages_win/kg/web은 gitignore - 스테이징 PC에만 있다")
@@ -425,13 +440,26 @@ def test_the_skill_runs_the_offline_html_step_and_quotes_the_interpreter():
         assert not re.search(r'(^|[^"])\$\(cat graphify-out/\.graphify_python\)', body, re.MULTILINE), path.name
 
 
-def test_start_pi_passes_the_bundle_root_and_appends_the_kg_venv_to_path():
+def test_start_pi_passes_the_bundle_root_and_leaves_path_alone():
     text = read("start-pi.bat")
     assert 'set "PI_AGENT_ROOT=%ROOT:\\=/%"' in text
     assert 'set "PI_AGENT_ROOT=%PI_AGENT_ROOT:~0,-1%"' in text
-    # 앞에 붙이면 Pi의 python이 KG venv로 바뀐다 - 끝에만 붙인다.
-    assert 'set "PATH=%PATH%;%ROOT%home\\kg\\venv\\Scripts"' in text
-    assert 'set "PATH=%ROOT%home\\kg' not in text
+    # PATH의 다른 graphify와 섞이지 않게 스킬이 번들 venv를 직접 부른다(codex R5 #2).
+    assert 'set "PATH=' not in text
+
+
+def test_the_skill_never_calls_a_bare_graphify_command():
+    import sanitize_graphify_skill
+
+    skill = WIN / "pi-skills" / "graphify"
+    bare = re.compile(r"(^|[ `:])graphify (query|export|path|explain|update|cluster-only|hook|claude|benchmark)\\b")
+    for path in [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))]:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if line.startswith("description:"):
+                continue
+            rest = line.replace(sanitize_graphify_skill.BUNDLE_GRAPHIFY, "")
+            assert not bare.search(rest), f"{path.name}:{number}: {line[:100]}"
+
 
 
 def test_start_lightrag_passes_config_values_and_checks_every_step():
@@ -439,31 +467,42 @@ def test_start_lightrag_passes_config_values_and_checks_every_step():
     assert 'set "LLM_BINDING_HOST=http://127.0.0.1:%LLAMA_PORT%/v1"' in text
     assert 'set "EMBEDDING_BINDING_HOST=http://127.0.0.1:%EMBED_PORT%/v1"' in text
     assert 'set "LLM_MODEL=%MODEL_ALIAS%"' in text
-    assert '--min-slot-ctx 8192' in text and '"%KG_PY%" "%ROOT%tools\\server_profile.py"' in text
+    assert '"%KG_PY%" "%ROOT%tools\\kg_budget.py" --env-file "%KG_WORK%\\.env"' in text
     assert 'if not exist "%KG_WORK%\\.env" (' in text
     launch = text.rindex('"%KG_HOME%\\venv\\Scripts\\lightrag-server.exe"')
-    for step in ("--min-slot-ctx", 'cd /d "%KG_WORK%"', 'set "TIKTOKEN_CACHE_DIR='):
+    for step in ("kg_budget.py", 'cd /d "%KG_WORK%"', 'set "TIKTOKEN_CACHE_DIR='):
         assert text.index(step) < launch, step
 
 
-def test_kg_server_check_mode():
-    assert server_profile.check_kg_props(_props(slots=4, n_ctx=8192), 8192) == []
-    assert server_profile.check_kg_props(_props(slots=4, n_ctx=4096), 8192)
-    assert server_profile.check_kg_props({}, 8192)
-    assert server_profile.main(["--base-url", "http://h:1", "--min-slot-ctx", "8192"], fetch=lambda u: _props(4, 8192)) == 0
-    with pytest.raises(SystemExit):
-        server_profile.main(["--base-url", "http://h:1", "--ctx", "1", "--min-slot-ctx", "2"], fetch=lambda u: {})
+import kg_budget
 
 
-# LightRAG 1.5.7 첫 추출 요청은 MAX_EXTRACT_INPUT_TOKENS의 제한을 받지 않는다(codex R4 #2).
-# 스테이징 PC에서 Qwen3.8 토크나이저로 잰 값(tasks/pi-agent-kg-align/artifacts/measure_extract.py):
-# 시스템 프롬프트 1,551(text 모드)/1,477(json) 토큰, tiktoken으로는 1,497/1,410.
-MEASURED_EXTRACT_SYSTEM_TOKENS = 1600
-USER_TEMPLATE_TOKENS = 250
+def test_the_shipped_lightrag_env_fits_the_kg_slot():
+    env = kg_budget.parse_env_file((WIN / "kg" / "lightrag.env").read_text(encoding="utf-8"))
+    assert kg_budget.check_budget(env, config_parse.KG_MIN_SLOT_CTX) == []
 
 
-def test_the_first_extraction_request_fits_one_slot_with_margin():
-    env = _env()
-    slot = config_parse.KG_MIN_SLOT_CTX
-    first = MEASURED_EXTRACT_SYSTEM_TOKENS + USER_TEMPLATE_TOKENS + int(env["CHUNK_SIZE"]) + int(env["OPENAI_LLM_MAX_TOKENS"])
-    assert first <= slot * 0.85
+def test_library_defaults_or_a_missing_output_cap_are_refused():
+    assert any("OPENAI_LLM_MAX_TOKENS" in p for p in kg_budget.check_budget({}, 8192))
+    problems = kg_budget.check_budget({"OPENAI_LLM_MAX_TOKENS": "2500"}, 8192)
+    assert any("SUMMARY_CONTEXT_SIZE" in p for p in problems)  # 기본 12000
+    assert any("MAX_TOTAL_TOKENS" in p for p in problems)  # 기본 30000
+
+
+def test_process_environment_wins_over_the_env_file_like_lightrag():
+    env_file = {"OPENAI_LLM_MAX_TOKENS": "2500", "SUMMARY_CONTEXT_SIZE": "4000"}
+    merged = kg_budget.effective(env_file, {"SUMMARY_CONTEXT_SIZE": "12000", "UNRELATED": "x"})
+    assert merged["SUMMARY_CONTEXT_SIZE"] == "12000" and "UNRELATED" not in merged
+
+
+def test_kg_budget_reads_the_slot_from_the_running_server(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text((WIN / "kg" / "lightrag.env").read_text(encoding="utf-8"), encoding="utf-8")
+    ok = kg_budget.main(["--env-file", str(env), "--base-url", "http://h:1"], fetch=lambda u: _props(4, 8192), process={})
+    small = kg_budget.main(["--env-file", str(env), "--base-url", "http://h:1"], fetch=lambda u: _props(4, 4096), process={})
+
+    def down(url):
+        raise OSError("refused")
+
+    gone = kg_budget.main(["--env-file", str(env), "--base-url", "http://h:1"], fetch=down, process={})
+    assert (ok, small, gone) == (0, 1, 1)

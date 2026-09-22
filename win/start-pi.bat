@@ -123,11 +123,10 @@ set "SKILL_ARG="
 if exist "%ROOT%pi-skills\graphify\SKILL.md" set SKILL_ARG=--skill "%ROOT%pi-skills\graphify"
 rem The skill's bash blocks find the bundle through PI_AGENT_ROOT, written with
 rem forward slashes and no trailing separator so Git Bash can join paths to it.
-rem The KG venv's Scripts folder goes at the END of PATH: graphify becomes
-rem callable, while python on PATH still resolves to whatever it was before.
+rem They run graphify as home\kg\venv\Scripts\python.exe -m graphify, never from
+rem PATH, so another graphify on this PC cannot mix into a bundle run.
 set "PI_AGENT_ROOT=%ROOT:\=/%"
 set "PI_AGENT_ROOT=%PI_AGENT_ROOT:~0,-1%"
-if exist "%ROOT%home\kg\venv\Scripts\graphify.exe" set "PATH=%PATH%;%ROOT%home\kg\venv\Scripts"
 "%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %SKILL_ARG% %*
 exit /b %errorlevel%
 

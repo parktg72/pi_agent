@@ -1,6 +1,6 @@
 # graphify reference: query, path, explain
 
-Load this when the user asks a question against an existing graph, or runs `/graphify path` or `/graphify explain`. The core's query stub points here for the full traversal flow. These flows use the `graphify query` CLI when it is available and fall back to an inline NetworkX traversal otherwise.
+Load this when the user asks a question against an existing graph, or runs `/graphify path` or `/graphify explain`. The core's query stub points here for the full traversal flow. These flows use the `"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify query` CLI when it is available and fall back to an inline NetworkX traversal otherwise.
 
 Two traversal modes - choose based on the question:
 
@@ -64,8 +64,8 @@ Build the **expanded query string** by joining the selected tokens with spaces. 
 
 Prefer the CLI when it is installed:
 ```bash
-graphify query "QUESTION"
-# or: graphify query "QUESTION" --dfs --budget 3000
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify query "QUESTION"
+# or: "${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify query "QUESTION" --dfs --budget 3000
 ```
 
 If the CLI is unavailable, load `graphify-out/graph.json` and run the traversal inline:
@@ -179,7 +179,7 @@ Replace `ORIGINAL_QUESTION` with the user's verbatim question, `ANSWER` with you
 - `dead_end` — the question/path led nowhere; don't re-derive it next time.
 - `corrected` — the saved answer was wrong; `--correction` records what was right.
 
-At the **start** of graph work, refresh and read the lessons: run `graphify reflect --if-stale` (cheap, deterministic, no LLM; `--if-stale` makes it a no-op when `LESSONS.md` is already newer than every input, e.g. when the git hook just refreshed it), then read `graphify-out/reflections/LESSONS.md`. It lists **preferred sources** (start there), **known dead ends** (skip them), and prior **corrections**. Running `reflect` yourself keeps the lessons current even without the git hook installed; if the post-commit hook *is* installed, `--if-stale` means your session-start run costs almost nothing.
+At the **start** of graph work, refresh and read the lessons: run `"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify reflect --if-stale` (cheap, deterministic, no LLM; `--if-stale` makes it a no-op when `LESSONS.md` is already newer than every input, e.g. when the git hook just refreshed it), then read `graphify-out/reflections/LESSONS.md`. It lists **preferred sources** (start there), **known dead ends** (skip them), and prior **corrections**. Running `reflect` yourself keeps the lessons current even without the git hook installed; if the post-commit hook *is* installed, `--if-stale` means your session-start run costs almost nothing.
 
 ---
 
@@ -188,7 +188,7 @@ At the **start** of graph work, refresh and read the lessons: run `graphify refl
 Find the shortest path between two named concepts in the graph. Prefer the CLI when installed:
 
 ```bash
-graphify path "NODE_A" "NODE_B"
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify path "NODE_A" "NODE_B"
 ```
 
 If the CLI is unavailable, run it inline:
@@ -256,7 +256,7 @@ After writing the explanation, save it back:
 Give a plain-language explanation of a single node - everything connected to it. Prefer the CLI when installed:
 
 ```bash
-graphify explain "NODE_NAME"
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify explain "NODE_NAME"
 ```
 
 If the CLI is unavailable, run it inline:

@@ -66,7 +66,21 @@ def rewrite(html: str) -> tuple[str, set[str], list[str]]:
     return out, needed, leftover
 
 
+_LOCAL_NAMES = {name for name, _ in KNOWN.values()}
+_LOCAL_TAG = re.compile(r"<script\b[^>]*\bsrc=\"(?P<name>[^\"/\\:]+)\"", re.IGNORECASE)
+
+
+def _expected(name: str) -> str:
+    return next(sha for n, sha in KNOWN.values() if n == name)
+
+
 def process(paths: list[Path], web: Path = WEB) -> list[str]:
+    """HTML마다: 필요한 로컬 사본을 모두 검증한 뒤에만 복사하고 HTML을 쓴다.
+
+    검증이 하나라도 실패하면 그 HTML은 건드리지 않는다 - 외부 URL이 남아 있어야 다음
+    실행이 다시 검사한다(codex R5 #1). 이미 로컬 참조로 바뀐 HTML도 옆의 사본을 다시
+    확인하고, 없거나 해시가 다르면 번들 사본으로 되살린다.
+    """
     problems: list[str] = []
     files = []
     for path in paths:
@@ -76,21 +90,31 @@ def process(paths: list[Path], web: Path = WEB) -> list[str]:
     for html_path in files:
         text = html_path.read_text(encoding="utf-8")
         out, needed, leftover = rewrite(text)
+        needed |= {m.group("name") for m in _LOCAL_TAG.finditer(out) if m.group("name") in _LOCAL_NAMES}
+        local_problems: list[str] = []
+        to_copy: list[str] = []
         for name in sorted(needed):
+            placed = html_path.parent / name
+            if placed.is_file() and _sha256(placed) == _expected(name):
+                continue
             source = web / name
-            expected = next(sha for n, sha in KNOWN.values() if n == name)
             if not source.is_file():
-                problems.append(f"{source} 없음 - 번들의 packages_win\\kg\\web 이 반입되지 않았다")
-                continue
-            if _sha256(source) != expected:
-                problems.append(f"{source} sha256이 고정값과 다르다 - 전송 손상 또는 다른 파일")
-                continue
-            shutil.copyfile(source, html_path.parent / name)
+                local_problems.append(f"{source} 없음 - 번들의 packages_win\\kg\\web 이 반입되지 않았다")
+            elif _sha256(source) != _expected(name):
+                local_problems.append(f"{source} sha256이 고정값과 다르다 - 전송 손상 또는 다른 파일")
+            else:
+                to_copy.append(name)
         for tag in leftover:
-            problems.append(f"{html_path.name}: 모르는 외부 참조가 남았다 - {tag[:120]}")
+            local_problems.append(f"{html_path.name}: 모르는 외부 참조가 남았다 - {tag[:120]}")
+        if local_problems:
+            problems.extend(local_problems)
+            print(f"[FAIL] {html_path} - 바꾸지 않았다")
+            continue
+        for name in to_copy:
+            shutil.copyfile(web / name, html_path.parent / name)
         if out != text:
             html_path.write_text(out, encoding="utf-8")
-        print(f"[{'ok' if not leftover else 'FAIL'}] {html_path}")
+        print(f"[ok] {html_path}")
     return problems
 
 

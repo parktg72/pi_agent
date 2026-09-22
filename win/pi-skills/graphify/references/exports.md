@@ -9,7 +9,7 @@ Load this when the user passed one of the export flags (`--wiki`, `--neo4j`, `--
 Run this before Step 9 (cleanup) so `.graphify_labels.json` is still available.
 
 ```bash
-graphify export wiki
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export wiki
 ```
 
 ### Step 7 - Neo4j export (only if --neo4j flag)
@@ -17,7 +17,7 @@ graphify export wiki
 **If `--neo4j`** - generate a Cypher file for manual import:
 
 ```bash
-graphify export neo4j
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export neo4j
 ```
 
 폐쇄망판: Neo4j로 push하지 않는다. 생성한 cypher.txt를 사내 절차로 옮긴다.
@@ -27,7 +27,7 @@ graphify export neo4j
 **If `--falkordb`** - generate a Cypher file. The statements are OpenCypher, but FalkorDB's `GRAPH.QUERY` runs one statement at a time (no bulk script import like Neo4j's `cypher-shell`). The portable `cypher.txt` artifact is the only FalkorDB output here:
 
 ```bash
-graphify export falkordb
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export falkordb
 ```
 
 폐쇄망판: FalkorDB로 push하지 않는다.
@@ -35,13 +35,13 @@ graphify export falkordb
 ### Step 7b - SVG export (only if --svg flag)
 
 ```bash
-graphify export svg
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export svg
 ```
 
 ### Step 7c - GraphML export (only if --graphml flag)
 
 ```bash
-graphify export graphml
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export graphml
 ```
 
 ### Step 7d - MCP server (only if --mcp flag)
@@ -69,7 +69,7 @@ To configure in Claude Desktop, add to `claude_desktop_config.json`. Claude Desk
 If `total_words` from `graphify-out/.graphify_detect.json` is greater than 5,000, run:
 
 ```bash
-graphify benchmark
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify benchmark
 ```
 
 Print the output directly in chat. If `total_words <= 5000`, skip silently - the graph value is structural clarity, not token compression, for small corpora.

@@ -61,11 +61,14 @@ set "LLM_BINDING_HOST=http://127.0.0.1:%LLAMA_PORT%/v1"
 set "EMBEDDING_BINDING_HOST=http://127.0.0.1:%EMBED_PORT%/v1"
 set "LLM_MODEL=%MODEL_ALIAS%"
 set "TIKTOKEN_CACHE_DIR=%KG_HOME%\tiktoken_cache"
-rem kg\lightrag.env caps each request to fit an 8192-token slot. Refuse to
-rem start if the LLM server on LLAMA_PORT has smaller slots (or is not up).
-"%KG_PY%" "%ROOT%tools\server_profile.py" --base-url "http://127.0.0.1:%LLAMA_PORT%" --min-slot-ctx 8192
+rem Every LightRAG request (input plus output cap) must fit one slot of the LLM
+rem server on LLAMA_PORT. The values checked are the ones LightRAG will use:
+rem home\kg\work\.env as the operator left it, overridden by any process
+rem environment variable, library defaults for missing keys. The slot size is
+rem read from the running server's /props. Too large, or no server: refuse.
+"%KG_PY%" "%ROOT%tools\kg_budget.py" --env-file "%KG_WORK%\.env" --base-url "http://127.0.0.1:%LLAMA_PORT%"
 if errorlevel 1 (
-  echo [FAIL] start start-llama.bat kg first, with slots of at least 8192 tokens
+  echo [FAIL] LightRAG was not started - start start-llama.bat kg first, and keep the .env caps within one slot
   exit /b 3
 )
 cd /d "%KG_WORK%"

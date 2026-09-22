@@ -12,9 +12,9 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 > - 입력은 로컬 경로만 받는다. URL(GitHub 저장소, 웹 문서, 동영상)은 받지 않는다.
 > - 코드는 tree-sitter AST로 로컬 파싱하므로 LLM이 필요 없다. 문서·PDF·이미지의 의미 추출은 지금 실행 중인 에이전트(로컬 llama-server)가 한다. API 키를 묻거나 설정하지 않는다.
 > - 음성·영상 전사(Whisper)는 모델을 내려받으므로 쓰지 않는다. video/audio 파일은 건너뛴다.
-> - Neo4j·FalkorDB로 push하지 않는다. `graphify export neo4j`/`falkordb`의 파일 출력(cypher.txt), `--graphml`, `--svg`, HTML은 로컬이라 쓸 수 있다.
+> - Neo4j·FalkorDB로 push하지 않는다. `"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export neo4j`/`falkordb`의 파일 출력(cypher.txt), `--graphml`, `--svg`, HTML은 로컬이라 쓸 수 있다.
 > - graphify의 HTML(graph.html 등)은 그래프 라이브러리를 CDN에서 받는다. HTML을 만든 뒤에는 **반드시** `"$PYTHON" "$PI_AGENT_ROOT/tools/graphify_offline_html.py" graphify-out` 을 실행해 번들의 로컬 사본으로 바꾼다(`$PYTHON`은 Step 1에서 정한 인터프리터).
-> - `PI_AGENT_ROOT`(번들 루트)와 `graphify` 실행 경로는 `start-pi.bat`이 넣어 준다.
+> - `PI_AGENT_ROOT`(번들 루트)는 `start-pi.bat`이 넣어 준다. graphify는 PATH에서 찾지 않고 이 문서의 모든 명령처럼 번들 venv의 `python.exe -m graphify`로 실행한다 - 다른 graphify가 설치돼 있어도 섞이지 않는다.
 
 ## Usage
 
@@ -50,7 +50,7 @@ Drop any folder of code, docs, papers, images, or video into graphify and get a 
 
 If the user invoked `/graphify --help` or `/graphify -h` (with no other arguments), print the contents of the `## Usage` section above verbatim and stop. Do not run any commands, do not detect files, do not default the path to `.`. Just print the Usage block and return.
 
-**Fast path — existing graph:** Before doing anything else, check whether `graphify-out/graph.json` exists. The expected location is `graphify-out/graph.json` relative to the **current working directory** (i.e. the project root where you are running commands). If it exists AND the user's request is a natural-language question about the codebase (e.g. "How does X work?", "What calls Y?", "Trace the data flow through Z") and NOT an explicit rebuild command (`--update`, `--cluster-only`, or a bare path/URL that implies fresh extraction): **skip Steps 1–5 entirely and jump straight to `## For /graphify query`.** Run `graphify query "<question>"` immediately. Do not run detect. Do not check corpus size. Do not ask the user to narrow. The graph is already built — use it.
+**Fast path — existing graph:** Before doing anything else, check whether `graphify-out/graph.json` exists. The expected location is `graphify-out/graph.json` relative to the **current working directory** (i.e. the project root where you are running commands). If it exists AND the user's request is a natural-language question about the codebase (e.g. "How does X work?", "What calls Y?", "Trace the data flow through Z") and NOT an explicit rebuild command (`--update`, `--cluster-only`, or a bare path/URL that implies fresh extraction): **skip Steps 1–5 entirely and jump straight to `## For /graphify query`.** Run `"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify query "<question>"` immediately. Do not run detect. Do not check corpus size. Do not ask the user to narrow. The graph is already built — use it.
 
 If no path was given, use `.` (current directory). Do not ask the user for a path.
 
@@ -75,7 +75,7 @@ fi
 # Write interpreter path for all subsequent steps (persists across invocations)
 mkdir -p graphify-out
 "$PYTHON" -c "import sys; open('graphify-out/.graphify_python', 'w', encoding='utf-8').write(sys.executable)"
-# Save scan root so `graphify update` (no args) knows where to look next time
+# Save scan root so `"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify update` (no args) knows where to look next time
 echo "$(cd INPUT_PATH && pwd)" > graphify-out/.graphify_root
 ```
 
@@ -508,15 +508,15 @@ If `--obsidian` was given:
 - If `--obsidian-dir <path>` was also given, pass it via `--dir`. Otherwise defaults to `graphify-out/obsidian`.
 
 ```bash
-graphify export obsidian
-# or with custom dir: graphify export obsidian --dir ~/vaults/my-project
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export obsidian
+# or with custom dir: "${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export obsidian --dir ~/vaults/my-project
 ```
 
 Generate the HTML graph (always, unless `--no-viz`):
 
 ```bash
-graphify export html  # auto-aggregates to community view if graph > 5000 nodes
-# or: graphify export html --no-viz
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export html  # auto-aggregates to community view if graph > 5000 nodes
+# or: "${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify export html --no-viz
 ```
 
 폐쇄망판: HTML을 만들었으면 여기서 CDN 참조를 로컬 사본으로 바꾼다. 실패(nonzero)하면 사용자에게 그 출력을 보여 준다:
@@ -660,10 +660,10 @@ Both are non-default subcommands. `--update` re-extracts only new or changed fil
 When `graphify-out/graph.json` already exists and the user asks a question about the corpus, answer from the graph rather than rebuilding it:
 
 ```bash
-graphify query "<question>"
+"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify query "<question>"
 ```
 
-Before traversal, expand the question against the graph's own vocabulary so a wording mismatch does not collapse the answer to noise. If the `graphify query` CLI is unavailable, fall back to an inline NetworkX traversal of `graphify-out/graph.json`. Answer using only what the graph output contains, and quote `source_location` when citing a specific fact. For that vocab-expansion step, the BFS/DFS traversal modes, the `--budget` cap, the NetworkX fallback, `save-result` feedback, and the `/graphify path` and `/graphify explain` flows, see `references/query.md`.
+Before traversal, expand the question against the graph's own vocabulary so a wording mismatch does not collapse the answer to noise. If the `"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify query` CLI is unavailable, fall back to an inline NetworkX traversal of `graphify-out/graph.json`. Answer using only what the graph output contains, and quote `source_location` when citing a specific fact. For that vocab-expansion step, the BFS/DFS traversal modes, the `--budget` cap, the NetworkX fallback, `save-result` feedback, and the `/graphify path` and `/graphify explain` flows, see `references/query.md`.
 
 ---
 

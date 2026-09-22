@@ -27,7 +27,7 @@ OFFLINE_NOTE = """
 > - 음성·영상 전사(Whisper)는 모델을 내려받으므로 쓰지 않는다. video/audio 파일은 건너뛴다.
 > - Neo4j·FalkorDB로 push하지 않는다. `graphify export neo4j`/`falkordb`의 파일 출력(cypher.txt), `--graphml`, `--svg`, HTML은 로컬이라 쓸 수 있다.
 > - graphify의 HTML(graph.html 등)은 그래프 라이브러리를 CDN에서 받는다. HTML을 만든 뒤에는 **반드시** `"$PYTHON" "$PI_AGENT_ROOT/tools/graphify_offline_html.py" graphify-out` 을 실행해 번들의 로컬 사본으로 바꾼다(`$PYTHON`은 Step 1에서 정한 인터프리터).
-> - `PI_AGENT_ROOT`(번들 루트)와 `graphify` 실행 경로는 `start-pi.bat`이 넣어 준다.
+> - `PI_AGENT_ROOT`(번들 루트)는 `start-pi.bat`이 넣어 준다. graphify는 PATH에서 찾지 않고 이 문서의 모든 명령처럼 번들 venv의 `python.exe -m graphify`로 실행한다 - 다른 graphify가 설치돼 있어도 섞이지 않는다.
 """
 
 STEP0 = """### Step 0 - GitHub repos and multi-path merge (only if a URL or several paths)
@@ -147,6 +147,20 @@ def sanitize_skill(text: str) -> str:
     return text
 
 
+BUNDLE_GRAPHIFY = '"${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe" -m graphify'
+_BARE_LINE = re.compile(r"^(?P<indent>[ \t]*)graphify (?=\S)", re.MULTILINE)
+_BARE_INLINE = re.compile(r"(?<=`)graphify (?=[a-z\"<-])")
+_BARE_COMMENT = re.compile(r"(?<=: )graphify (?=[a-z])")
+
+
+def explicit_graphify(text: str) -> str:
+    # 맨몸 `graphify <명령>`은 PATH의 다른 graphify를 부를 수 있다(codex R5 #2). 번들 venv로 고정한다.
+    text = _BARE_LINE.sub(lambda m: m.group("indent") + BUNDLE_GRAPHIFY + " ", text)
+    text = _BARE_INLINE.sub(BUNDLE_GRAPHIFY + " ", text)
+    # 코드 블록 주석의 대안 명령("# or: graphify export html --no-viz")도 복사돼 실행되므로 같이 고친다.
+    return _BARE_COMMENT.sub(BUNDLE_GRAPHIFY + " ", text)
+
+
 _UNQUOTED_PY = re.compile(r'(?<!")\$\(cat graphify-out/\.graphify_python\)(?!")')
 
 
@@ -184,7 +198,7 @@ def main(argv: list[str]) -> int:
     if dst.exists():
         shutil.rmtree(dst)
     (dst / "references").mkdir(parents=True)
-    (dst / "SKILL.md").write_text(quote_interpreter(sanitize_skill((src / "SKILL-agents.md").read_text(encoding="utf-8"))), encoding="utf-8", newline="\n")
+    (dst / "SKILL.md").write_text(explicit_graphify(quote_interpreter(sanitize_skill((src / "SKILL-agents.md").read_text(encoding="utf-8")))), encoding="utf-8", newline="\n")
     for ref in sorted((src / "references").glob("*.md")):
         if ref.name in DROP_REFERENCES:
             continue
@@ -193,7 +207,7 @@ def main(argv: list[str]) -> int:
             body = sanitize_add_watch(body)
         elif ref.name == "exports.md":
             body = sanitize_exports(body)
-        (dst / "references" / ref.name).write_text(quote_interpreter(body), encoding="utf-8", newline="\n")
+        (dst / "references" / ref.name).write_text(explicit_graphify(quote_interpreter(body)), encoding="utf-8", newline="\n")
     print(f"[ok] {dst}")
     return 0
 
