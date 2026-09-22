@@ -10,6 +10,9 @@ b11010 `GET /props`(tools/server/server-context.cpp get_res_props)가 주는 값
 - `chat_template` = 서버가 실제로 쓰는 템플릿 원문
 
 조회 실패·필드 누락·값 불일치는 모두 거부다. 확인할 수 없는 서버에 Pi를 붙이지 않는다.
+
+`--min-slot-ctx`는 반대 방향 검사다. start-lightrag.bat이 LightRAG를 띄우기 전에, 떠 있는
+LLM 서버의 슬롯 창이 kg/lightrag.env 예산이 가정한 크기(8192) 이상인지 본다(codex R4 #7).
 """
 from __future__ import annotations
 
@@ -57,10 +60,25 @@ def check_props(props: dict, expected_ctx: int, template: str | None) -> list[st
     return problems
 
 
+def check_kg_props(props: dict, min_slot_ctx: int) -> list[str]:
+    settings = props.get("default_generation_settings")
+    n_ctx = settings.get("n_ctx") if isinstance(settings, dict) else None
+    if not isinstance(n_ctx, int):
+        return ["/props에 default_generation_settings.n_ctx가 없다 - 슬롯 창을 확인할 수 없다"]
+    if n_ctx < min_slot_ctx:
+        return [
+            f"LLM 서버 슬롯 창 {n_ctx}이 LightRAG 예산이 가정한 {min_slot_ctx}보다 작다 - "
+            "요청이 슬롯을 넘친다. KG_CTX / KG_PARALLEL을 확인하라"
+        ]
+    return []
+
+
 def main(argv: list[str], fetch: Callable[[str], dict] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="server_profile")
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--ctx", required=True, type=int)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--ctx", type=int, help="Pi 프로파일: 슬롯 1개, 슬롯 창 == 이 값")
+    mode.add_argument("--min-slot-ctx", type=int, help="kg 프로파일: 슬롯 창 >= 이 값")
     parser.add_argument("--template-file", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -83,12 +101,17 @@ def main(argv: list[str], fetch: Callable[[str], dict] | None = None) -> int:
     if not isinstance(props, dict):
         print("[FAIL] /props 응답이 JSON 객체가 아니다", file=sys.stderr)
         return 1
-    problems = check_props(props, args.ctx, template)
+    if args.min_slot_ctx is not None:
+        problems = check_kg_props(props, args.min_slot_ctx)
+        done = f"[ok] LLM 서버 슬롯 창 >= {args.min_slot_ctx}"
+    else:
+        problems = check_props(props, args.ctx, template)
+        done = f"[ok] 서버 구성: 슬롯 1개, 창 {args.ctx}" + (", 고정 템플릿 일치" if template is not None else "")
     for problem in problems:
         print(f"[FAIL] {problem}", file=sys.stderr)
     if problems:
         return 1
-    print(f"[ok] 서버 구성: 슬롯 1개, 창 {args.ctx}" + (", 고정 템플릿 일치" if template is not None else ""))
+    print(done)
     return 0
 
 

@@ -16,6 +16,12 @@ rem Starts the LightRAG server (WebUI http://127.0.0.1:9621) from home\kg\work.
 rem Needs: install-kg.bat once, start-llama.bat kg (port LLAMA_PORT) and
 rem start-embedding.bat (port EMBED_PORT) running. The tokenizer cache is set
 rem for this process only - no user-wide environment variable is written.
+rem Every step that can fail stops the script with a nonzero code: a server
+rem started without its .env would fall back to the library defaults, which
+rem point at external endpoints.
+if not defined LLAMA_PORT set "LLAMA_PORT=8080"
+if not defined EMBED_PORT set "EMBED_PORT=8081"
+if not defined MODEL_ALIAS set "MODEL_ALIAS=qwen3.8-27b"
 set "KG_HOME=%ROOT%home\kg"
 set "KG_PY=%KG_HOME%\venv\Scripts\python.exe"
 set "KG_WORK=%KG_HOME%\work"
@@ -27,17 +33,48 @@ if not exist "%KG_HOME%\venv\Scripts\lightrag-server.exe" (
   echo [FAIL] lightrag-server.exe not found in home\kg\venv - rerun install-kg.bat
   exit /b 2
 )
+if not exist "%KG_HOME%\tiktoken_cache" (
+  echo [FAIL] %KG_HOME%\tiktoken_cache not found - rerun install-kg.bat
+  exit /b 2
+)
 if not exist "%ROOT%kg\lightrag.env" (
   echo [FAIL] %ROOT%kg\lightrag.env not found
   exit /b 2
 )
 if not exist "%KG_WORK%\inputs" mkdir "%KG_WORK%\inputs"
+if not exist "%KG_WORK%\inputs" (
+  echo [FAIL] could not create %KG_WORK%\inputs
+  exit /b 5
+)
 rem The template is copied once. Later edits in home\kg\work\.env are the
 rem operator's and are kept; delete that file to go back to the template.
 if not exist "%KG_WORK%\.env" copy /y "%ROOT%kg\lightrag.env" "%KG_WORK%\.env" >nul
+if not exist "%KG_WORK%\.env" (
+  echo [FAIL] could not copy kg\lightrag.env to %KG_WORK%\.env
+  exit /b 5
+)
+rem The servers this bundle started are the ones LightRAG must talk to, so the
+rem ports and the model name come from config.env. LightRAG loads .env with
+rem override=False (lightrag\api\config.py), so these process values win over
+rem the same keys in .env.
+set "LLM_BINDING_HOST=http://127.0.0.1:%LLAMA_PORT%/v1"
+set "EMBEDDING_BINDING_HOST=http://127.0.0.1:%EMBED_PORT%/v1"
+set "LLM_MODEL=%MODEL_ALIAS%"
 set "TIKTOKEN_CACHE_DIR=%KG_HOME%\tiktoken_cache"
+rem kg\lightrag.env caps each request to fit an 8192-token slot. Refuse to
+rem start if the LLM server on LLAMA_PORT has smaller slots (or is not up).
+"%KG_PY%" "%ROOT%tools\server_profile.py" --base-url "http://127.0.0.1:%LLAMA_PORT%" --min-slot-ctx 8192
+if errorlevel 1 (
+  echo [FAIL] start start-llama.bat kg first, with slots of at least 8192 tokens
+  exit /b 3
+)
 cd /d "%KG_WORK%"
+if errorlevel 1 (
+  echo [FAIL] could not change to %KG_WORK%
+  exit /b 5
+)
 echo [info] LightRAG in %KG_WORK% - documents go in %KG_WORK%\inputs
+echo [info] LLM %LLM_BINDING_HOST% as %LLM_MODEL%, embeddings %EMBEDDING_BINDING_HOST%
 "%KG_HOME%\venv\Scripts\lightrag-server.exe"
 exit /b %errorlevel%
 

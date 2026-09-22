@@ -111,7 +111,8 @@ def test_an_unknown_profile_argument_stops_startup():
     [
         ('set "KG_CTX=32768"\nset "KG_PARALLEL=4"\n', True),
         ('set "KG_CTX=32768"\nset "KG_PARALLEL=3"\n', False),  # 나누어떨어지지 않는다
-        ('set "KG_CTX=16384"\nset "KG_PARALLEL=4"\n', True),  # 슬롯 4096
+        ('set "KG_CTX=16384"\nset "KG_PARALLEL=4"\n', False),  # 슬롯 4096 < 8192(lightrag.env 가정)
+        ('set "KG_CTX=16384"\nset "KG_PARALLEL=2"\n', True),  # 슬롯 8192
         ('set "KG_PARALLEL=5"\n', False),
     ],
 )
@@ -373,3 +374,96 @@ def test_the_sanitized_skill_is_reproducible_from_the_source(tmp_path):
     shipped = WIN / "pi-skills" / "graphify"
     for path in sorted(shipped.rglob("*.md")):
         assert path.read_bytes() == (tmp_path / "g" / path.relative_to(shipped)).read_bytes(), path.name
+
+
+# --- codex R4 반영 ------------------------------------------------------------------
+
+import graphify_offline_html
+
+
+def test_graph_html_cdn_scripts_are_rewritten_to_local_copies():
+    html = (
+        '<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"\n'
+        '        integrity="sha384-x" crossorigin="anonymous"></script>'
+    )
+    out, needed, leftover = graphify_offline_html.rewrite(html)
+    assert out == '<script src="vis-network-9.1.6.min.js"></script>'
+    assert needed == {"vis-network-9.1.6.min.js"} and leftover == []
+
+
+def test_an_unknown_external_script_is_reported_not_passed_silently(tmp_path):
+    page = tmp_path / "graph.html"
+    page.write_text('<script src="https://example.com/x.js"></script>', encoding="utf-8")
+    problems = graphify_offline_html.process([tmp_path], web=tmp_path / "web")
+    assert any("모르는 외부 참조" in problem for problem in problems)
+
+
+def test_a_local_copy_with_the_wrong_hash_is_refused(tmp_path):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "d3-7.9.0.min.js").write_text("not d3", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "tree.html").write_text('<script src="https://d3js.org/d3.v7.min.js"></script>', encoding="utf-8")
+    problems = graphify_offline_html.process([out], web=web)
+    assert any("sha256" in problem for problem in problems)
+    assert not (out / "d3-7.9.0.min.js").exists()
+
+
+@pytest.mark.skipif(not graphify_offline_html.WEB.is_dir(), reason="packages_win/kg/web은 gitignore - 스테이징 PC에만 있다")
+def test_the_bundled_web_copies_match_the_pinned_hashes():
+    for name, sha in graphify_offline_html.KNOWN.values():
+        assert hashlib.sha256((graphify_offline_html.WEB / name).read_bytes()).hexdigest() == sha, name
+
+
+def test_the_skill_runs_the_offline_html_step_and_quotes_the_interpreter():
+    skill = WIN / "pi-skills" / "graphify"
+    text = (skill / "SKILL.md").read_text(encoding="utf-8")
+    assert "tools/graphify_offline_html.py" in text
+    for path in [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))]:
+        body = path.read_text(encoding="utf-8")
+        assert not re.search(r'(^|[^"])\$\(cat graphify-out/\.graphify_python\)', body, re.MULTILINE), path.name
+
+
+def test_start_pi_passes_the_bundle_root_and_appends_the_kg_venv_to_path():
+    text = read("start-pi.bat")
+    assert 'set "PI_AGENT_ROOT=%ROOT:\\=/%"' in text
+    assert 'set "PI_AGENT_ROOT=%PI_AGENT_ROOT:~0,-1%"' in text
+    # 앞에 붙이면 Pi의 python이 KG venv로 바뀐다 - 끝에만 붙인다.
+    assert 'set "PATH=%PATH%;%ROOT%home\\kg\\venv\\Scripts"' in text
+    assert 'set "PATH=%ROOT%home\\kg' not in text
+
+
+def test_start_lightrag_passes_config_values_and_checks_every_step():
+    text = read("start-lightrag.bat")
+    assert 'set "LLM_BINDING_HOST=http://127.0.0.1:%LLAMA_PORT%/v1"' in text
+    assert 'set "EMBEDDING_BINDING_HOST=http://127.0.0.1:%EMBED_PORT%/v1"' in text
+    assert 'set "LLM_MODEL=%MODEL_ALIAS%"' in text
+    assert '--min-slot-ctx 8192' in text and '"%KG_PY%" "%ROOT%tools\\server_profile.py"' in text
+    assert 'if not exist "%KG_WORK%\\.env" (' in text
+    launch = text.rindex('"%KG_HOME%\\venv\\Scripts\\lightrag-server.exe"')
+    for step in ("--min-slot-ctx", 'cd /d "%KG_WORK%"', 'set "TIKTOKEN_CACHE_DIR='):
+        assert text.index(step) < launch, step
+
+
+def test_kg_server_check_mode():
+    assert server_profile.check_kg_props(_props(slots=4, n_ctx=8192), 8192) == []
+    assert server_profile.check_kg_props(_props(slots=4, n_ctx=4096), 8192)
+    assert server_profile.check_kg_props({}, 8192)
+    assert server_profile.main(["--base-url", "http://h:1", "--min-slot-ctx", "8192"], fetch=lambda u: _props(4, 8192)) == 0
+    with pytest.raises(SystemExit):
+        server_profile.main(["--base-url", "http://h:1", "--ctx", "1", "--min-slot-ctx", "2"], fetch=lambda u: {})
+
+
+# LightRAG 1.5.7 첫 추출 요청은 MAX_EXTRACT_INPUT_TOKENS의 제한을 받지 않는다(codex R4 #2).
+# 스테이징 PC에서 Qwen3.8 토크나이저로 잰 값(tasks/pi-agent-kg-align/artifacts/measure_extract.py):
+# 시스템 프롬프트 1,551(text 모드)/1,477(json) 토큰, tiktoken으로는 1,497/1,410.
+MEASURED_EXTRACT_SYSTEM_TOKENS = 1600
+USER_TEMPLATE_TOKENS = 250
+
+
+def test_the_first_extraction_request_fits_one_slot_with_margin():
+    env = _env()
+    slot = config_parse.KG_MIN_SLOT_CTX
+    first = MEASURED_EXTRACT_SYSTEM_TOKENS + USER_TEMPLATE_TOKENS + int(env["CHUNK_SIZE"]) + int(env["OPENAI_LLM_MAX_TOKENS"])
+    assert first <= slot * 0.85

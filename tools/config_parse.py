@@ -150,6 +150,9 @@ FLASH_ATTN_MODES = ("auto", "off")
 LORA_VERIFIED_BASES = ("Qwen3.8-27B-Q6_K.gguf",)
 # -b(논리 배치)를 start-llama.bat이 1024로 고정한다. -ub가 그보다 크면 의미가 없다.
 LLAMA_BATCH = 1024
+# kg 프로파일 슬롯 창 하한. kg\\lightrag.env의 요청 상한(입력 4000 + 출력 2500 등)이 이 크기를
+# 가정한다(codex R4 #7). start-lightrag.bat도 떠 있는 서버를 같은 값으로 확인한다.
+KG_MIN_SLOT_CTX = 8192
 
 
 def _check_kv_type(value: str) -> str | None:
@@ -338,8 +341,11 @@ def cross_check(values: dict[str, str]) -> list[str]:
     if kg_ctx and kg_parallel and kg_ctx.isdigit() and kg_parallel.isdigit():
         if int(kg_ctx) % int(kg_parallel):
             problems.append(f"KG_CTX={kg_ctx}가 KG_PARALLEL={kg_parallel}로 나누어떨어지지 않는다 - 슬롯 창이 어긋난다")
-        elif int(kg_ctx) // int(kg_parallel) < 4096:
-            problems.append(f"KG 슬롯당 창 {int(kg_ctx) // int(kg_parallel)}은 너무 작다 - 4096 이상이 되게 KG_CTX를 늘리거나 KG_PARALLEL을 줄여라")
+        elif int(kg_ctx) // int(kg_parallel) < KG_MIN_SLOT_CTX:
+            problems.append(
+                f"KG 슬롯당 창 {int(kg_ctx) // int(kg_parallel)}이 {KG_MIN_SLOT_CTX}보다 작다 - kg\\lightrag.env의 "
+                "요청 상한이 이 크기를 가정한다. KG_CTX를 늘리거나 KG_PARALLEL을 줄여라"
+            )
     llama_port = values.get("LLAMA_PORT", "")
     embed_port = values.get("EMBED_PORT", "")
     if llama_port and embed_port and llama_port == embed_port:

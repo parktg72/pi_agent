@@ -14,6 +14,7 @@ Step 1의 인터프리터 탐색은 번들 venv(home/kg/venv) 고정으로 바�
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -25,6 +26,8 @@ OFFLINE_NOTE = """
 > - 코드는 tree-sitter AST로 로컬 파싱하므로 LLM이 필요 없다. 문서·PDF·이미지의 의미 추출은 지금 실행 중인 에이전트(로컬 llama-server)가 한다. API 키를 묻거나 설정하지 않는다.
 > - 음성·영상 전사(Whisper)는 모델을 내려받으므로 쓰지 않는다. video/audio 파일은 건너뛴다.
 > - Neo4j·FalkorDB로 push하지 않는다. `graphify export neo4j`/`falkordb`의 파일 출력(cypher.txt), `--graphml`, `--svg`, HTML은 로컬이라 쓸 수 있다.
+> - graphify의 HTML(graph.html 등)은 그래프 라이브러리를 CDN에서 받는다. HTML을 만든 뒤에는 **반드시** `"$PYTHON" "$PI_AGENT_ROOT/tools/graphify_offline_html.py" graphify-out` 을 실행해 번들의 로컬 사본으로 바꾼다(`$PYTHON`은 Step 1에서 정한 인터프리터).
+> - `PI_AGENT_ROOT`(번들 루트)와 `graphify` 실행 경로는 `start-pi.bat`이 넣어 준다.
 """
 
 STEP0 = """### Step 0 - GitHub repos and multi-path merge (only if a URL or several paths)
@@ -126,6 +129,14 @@ def sanitize_skill(text: str) -> str:
         where,
     )
     text = _replace_once(text, "`--neo4j`/`--neo4j-push`, `--falkordb`/`--falkordb-push`", "`--neo4j`, `--falkordb` (file output only)", where)
+    text = _replace_once(
+        text,
+        "### Steps 6b-8 - Wiki, Neo4j, FalkorDB",
+        "폐쇄망판: HTML을 만들었으면 여기서 CDN 참조를 로컬 사본으로 바꾼다. 실패(nonzero)하면 사용자에게 그 출력을 보여 준다:\n\n"
+        "```bash\n\"$(cat graphify-out/.graphify_python)\" \"$PI_AGENT_ROOT/tools/graphify_offline_html.py\" graphify-out\n```\n\n"
+        "### Steps 6b-8 - Wiki, Neo4j, FalkorDB",
+        where,
+    )
     text = _replace_once(text, "If graphify saved you time, consider supporting it: https://github.com/sponsors/safishamsi\n\n", "", where)
     text = _replace_once(
         text,
@@ -134,6 +145,14 @@ def sanitize_skill(text: str) -> str:
         where,
     )
     return text
+
+
+_UNQUOTED_PY = re.compile(r'(?<!")\$\(cat graphify-out/\.graphify_python\)(?!")')
+
+
+def quote_interpreter(text: str) -> str:
+    # 설치 경로에 공백이 있으면 인용하지 않은 $(cat ...)는 명령이 둘로 갈라진다(codex R4 #6).
+    return _UNQUOTED_PY.sub('"$(cat graphify-out/.graphify_python)"', text)
 
 
 def sanitize_add_watch(text: str) -> str:
@@ -165,7 +184,7 @@ def main(argv: list[str]) -> int:
     if dst.exists():
         shutil.rmtree(dst)
     (dst / "references").mkdir(parents=True)
-    (dst / "SKILL.md").write_text(sanitize_skill((src / "SKILL-agents.md").read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
+    (dst / "SKILL.md").write_text(quote_interpreter(sanitize_skill((src / "SKILL-agents.md").read_text(encoding="utf-8"))), encoding="utf-8", newline="\n")
     for ref in sorted((src / "references").glob("*.md")):
         if ref.name in DROP_REFERENCES:
             continue
@@ -174,7 +193,7 @@ def main(argv: list[str]) -> int:
             body = sanitize_add_watch(body)
         elif ref.name == "exports.md":
             body = sanitize_exports(body)
-        (dst / "references" / ref.name).write_text(body, encoding="utf-8", newline="\n")
+        (dst / "references" / ref.name).write_text(quote_interpreter(body), encoding="utf-8", newline="\n")
     print(f"[ok] {dst}")
     return 0
 
