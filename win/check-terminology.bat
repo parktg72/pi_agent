@@ -13,7 +13,7 @@ if errorlevel 1 exit /b 4
 call :load_config
 if errorlevel 1 exit /b 6
 rem Checks the medical terminology dump slots (terminology\kcd8, icd10, atc,
-rem umls, omop) against their slot.json records: required provenance and licence
+rem umls, omop, mesh, doid, mondo, hira_ingredients, hira_atc_mapping) against their slot.json records: required provenance and licence
 rem review fields, review_status approved, file sizes and sha256. The slots are
 rem outside the manifest, so this is their transfer check.
 rem   check-terminology.bat              check every slot (nonzero if any is incomplete)
@@ -36,7 +36,7 @@ if "%~2"=="" goto :record_missing
 %BOOTSTRAP_PY% "%ROOT%tools\terminology_slots.py" --root "%ROOT%." record %2
 exit /b %errorlevel%
 :record_missing
-echo [FAIL] name the slot to record: kcd8, icd10, atc, umls or omop
+echo [FAIL] name the slot to record: see the folders under terminology\
 exit /b 2
 
 :load_config
