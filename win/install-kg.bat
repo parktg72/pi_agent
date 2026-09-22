@@ -13,7 +13,7 @@ if errorlevel 1 exit /b 4
 call :load_config
 if errorlevel 1 exit /b 6
 rem Installs the knowledge-graph Python stack (LightRAG[api,offline], Kuzu,
-rem NetworkX, rdflib, tiktoken, graphify) into its own virtual environment,
+rem NetworkX, rdflib, pyoxigraph, tiktoken, graphify) into its own virtual environment,
 rem home\kg\venv, from packages_win\kg\wheelhouse only. It is kept apart from
 rem .venv and packages_win\py312 on purpose: the KG wheelhouse carries two numpy
 rem and two boto3 versions, and mixing it into the analysis stack's constraints
@@ -49,7 +49,7 @@ if not exist "%KG_VENV%\Scripts\python.exe" (
 )
 set "KG_PY="%KG_VENV%\Scripts\python.exe""
 echo [2/5] installing from %KG_WHEELS% only (--no-index, no network)
-%KG_PY% -m pip install --no-index --find-links="%KG_WHEELS%" "lightrag-hku[api,offline]" kuzu networkx rdflib tiktoken "graphifyy[pdf,leiden]" > "%EV%\install-kg.txt" 2>&1
+%KG_PY% -m pip install --no-index --find-links="%KG_WHEELS%" "lightrag-hku[api,offline]" kuzu networkx rdflib pyoxigraph==0.5.11 tiktoken "graphifyy[pdf,leiden]" > "%EV%\install-kg.txt" 2>&1
 if errorlevel 1 (
   echo [FAIL] pip install failed - see evidence\install-kg.txt
   exit /b 5
@@ -68,7 +68,7 @@ if errorlevel 1 (
 )
 echo [5/5] import check with the network-free tokenizer cache
 set "TIKTOKEN_CACHE_DIR=%KG_HOME%\tiktoken_cache"
-%KG_PY% -c "import lightrag, kuzu, networkx, rdflib, graphify, tiktoken; n=len(tiktoken.get_encoding('o200k_base').encode('test')); print('[ok] imports; tiktoken offline tokens', n)"
+%KG_PY% -c "import lightrag, kuzu, networkx, rdflib, pyoxigraph, graphify, tiktoken; n=len(tiktoken.get_encoding('o200k_base').encode('test')); print('[ok] imports; pyoxigraph', pyoxigraph.__version__, '; tiktoken offline tokens', n)"
 if errorlevel 1 (
   echo [FAIL] import check failed
   exit /b 5

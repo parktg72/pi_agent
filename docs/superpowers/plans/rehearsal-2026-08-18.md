@@ -686,6 +686,7 @@ memory.used.
 | 11-20 | Pi 차단 | kg 프로파일 서버가 뜬 상태에서 `start-pi.bat` | exit 11과 "슬롯이 4개" 메시지. Pi 프로파일로 다시 띄우면 통과 | |
 | 11-21 | LightRAG 왕복 | `start-lightrag.bat` → 작은 문서 1건 인덱싱 → 질의 1회 | 슬롯 초과(context length) 오류 없음, `rag_storage\graph_chunk_entity_relation.graphml` 생성, gleaning 건너뜀 경고 수 기록, 방화벽 아웃바운드 차단 상태에서 외부 접속 시도 없음 | |
 | 11-22 | graphify | Pi에서 `/skill:graphify <작은 코드 폴더>` → `graphify-out\graph.html`을 브라우저로 열기 | 그래프가 그려진다(오프라인 사본 참조 — `graphify_offline_html.py` [ok]), `GRAPH_REPORT.md` 생성, 외부 요청 없음 | |
+| 11-23 | pyoxigraph·용어 슬롯 (2026-09-23) | `install-kg.bat` 출력의 `pyoxigraph 0.5.11`, `check-terminology.bat` | import 성공. 빈 슬롯이면 5개 모두 `[empty]`·exit 0. 덤프를 받았다면 `record`→검토 기입→`[recorded]`. `home\kg\venv` 파이썬으로 임시 폴더에 `pyoxigraph.Store` 생성·트리플 1개 적재·재개방·SPARQL 조회 | |
 
 ### 11-13. LoRA 학습 스택(L3) — 반입을 결정한 경우에만
 

@@ -18,6 +18,16 @@ packages_win/vcruntime/
 # KG 휠하우스·tiktoken 원본 - packages_win/py312와 같은 이유(상류 배포물)로 추적하지 않는다.
 # 매니페스트 해시 범위에는 그대로 남는다.
 packages_win/kg/
+# 의료 용어 체계 덤프와 작성된 슬롯 기록 - 라이선스 자료라 공개 저장소에 올리지 않는다.
+# 슬롯 README.md·slot.example.json만 추적한다(tasks/pi-agent-terminology 합의 1).
+# 허용 목록 방식: 슬롯 안에서는 README.md와 slot.example.json만 추적한다. slot.json.bak이나
+# 슬롯 루트에 잘못 둔 덤프도 올라가지 않는다(codex R4 #1).
+/terminology/*
+!/terminology/README.md
+!/terminology/*/
+/terminology/*/*
+!/terminology/*/README.md
+!/terminology/*/slot.example.json
 
 # 실행하면서 바뀌는 영역 — 매니페스트 해시 범위에서도 제외된다
 home/
@@ -54,6 +64,7 @@ STAGING_MANIFEST.json
 /start-embedding.bat
 /install-kg.bat
 /start-lightrag.bat
+/check-terminology.bat
 /pi-skills/
 /chat-templates/
 /kg/

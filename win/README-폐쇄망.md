@@ -673,6 +673,22 @@ CDN에서 받게 돼 있어서, 스킬이 `tools\graphify_offline_html.py` 로 �
 d3 7.9.0, mermaid 11.17.2 — `packages_win\kg\web\`)을 가리키게 바꾼다.
 **`GEMINI_API_KEY`·`GOOGLE_API_KEY` 는 설정하지 않는다** — 설정하면 graphify가 외부 API를 부른다.
 
+### 의료 용어 체계 슬롯 (KCD-8 · ICD-10 · ATC · UMLS · OMOP, 2026-09-23)
+
+`terminology\{kcd8,icd10,atc,umls,omop}\` 는 용어 체계 덤프를 넣을 **자리**다. **지금은 어느 슬롯에도 데이터가 없다.**
+RDF 저장소 엔진 `pyoxigraph` 0.5.11은 `install-kg.bat` 이 `home\kg\venv` 에 설치한다(RDFLib 7.6.0은 이미 있다).
+파서·적재기·질의 도구는 원본과 형식 명세를 받은 뒤 만든다 — 적재 결과는 `home\kg\terminology\oxigraph\` 에 둘 예정이다.
+
+- 덤프는 `terminology\<슬롯>\data\`, 출처·라이선스 검토 기록은 `slot.json`(각 슬롯의 `slot.example.json` 복사). 둘 다
+  git에 올라가지 않고(공개 저장소·라이선스 자료) 매니페스트도 검사하지 않는다 — 현장에서 넣어도 `verify-bundle.bat` 은 깨지지 않는다.
+- `check-terminology.bat record <슬롯>` 이 파일 목록·크기·sha256을 `slot.json` 에 적는다. 파일이 바뀌면 검토 상태가
+  `unreviewed` 로 돌아간다. `check-terminology.bat` 은 모든 슬롯을 `empty` / `recorded` / `incomplete` 로 보고하고,
+  `incomplete`(필수 기록 누락, 검토가 `approved` 아님, 크기·해시 불일치, 기록 밖 파일, 기록된 파일 소실)가 있으면 실패한다.
+  스테이징 PC에서 `record` 하고 옮기면 이것이 전송 검사다.
+- `recorded` 는 기록·해시·검토가 맞다는 뜻이지 **적재할 수 있다는 뜻이 아니다.** 이 도구는 이용 조건을 판정하지 않는다 —
+  UMLS는 NLM 라이선스, OMOP은 Athena 계정과 일부 어휘의 별도 라이선스, KCD-8·ICD-10·ATC는 배포처 약관을 사람이 확인해
+  `review_status`·`review_scope`·`review_basis` 에 적는다. KCD-8과 ICD-10은 같은 코드셋으로 섞지 않는다.
+
 ### 확인할 것
 
 - `netstat -ano | findstr "8080 8081 9621"` 로 전부 `127.0.0.1` 에만 바인딩됐는지

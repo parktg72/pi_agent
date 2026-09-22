@@ -622,3 +622,16 @@ VRAM 산술(63488, KV f16): 층 18.61 + 출력 0.97 + KV 3.875(§14.3) + 선형 
 반입하지 않은 원본 항목: `lightrag_demo.py`(alias·`.env`·예산 검사·출력 상한 우회), 안내 문서 00~02(README-폐쇄망이 대체, 02는 뒤집힌 FA 주장 포함), `06_docs`(상류 README의 pip/uv/Gemini/URL 안내), `SHA256SUMS`·`verify_sha256.ps1`(매니페스트가 대체), `install_offline.ps1`(`install-kg.bat`이 대체). 남은 한계: `kg_budget`는 출력 상한을 `OPENAI_LLM_MAX_TOKENS`로만 본다.
 
 대상 PC 실측은 여전히 없다. 리허설 §11-2(off/auto A/B), §11-9(Q5 기본), §11-18~§11-22(KG 스택)가 확인 항목이다.
+
+### 14.9 pyoxigraph와 의료 용어 체계 슬롯 (2026-09-23)
+
+사용자 지시: pyoxigraph 추가, KCD-8/ICD-10·ATC·UMLS·OMOP 덤프 자리 준비. pane(codex·agy) 3라운드 + TypeSafe(oxrdflib). 근거: 개발 트리 `tasks/pi-agent-terminology/artifacts/consensus.md`.
+
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| 엔진 | `pyoxigraph==0.5.11`(cp312 win_amd64, 의존성 없음, MIT OR Apache-2.0)을 KG 휠하우스·`install-kg.bat`에 추가 | 리눅스 휠로 디스크 Store→`bulk_load`(named graph)→재개방→SPARQL(한글 리터럴) 실측 |
+| oxrdflib | 넣지 않음 | 이번 범위에 rdflib 저장소 어댑터를 쓰는 구현이 없다. TypeSafe exclude 0.93 |
+| 자리 | `terminology/<slot>/` — `README.md`·`slot.example.json` 추적·해시, `data/`·`slot.json`은 gitignore·`manifest.FIELD_PATHS` | 라이선스 자료를 공개 저장소에 올리지 않는다. 현장 반입이 번들 검사를 깨지 않게 한다 |
+| 무결성·검토 | `tools/terminology_slots.py`(`check-terminology.bat`): files[] bytes·sha256(1MB 스트리밍, 크기 먼저), 필수 출처·검토 필드, `review_status == approved`. 재기록으로 파일이 바뀌면 `unreviewed` | 자동 법률 판정·우회 플래그 없음 |
+| 범위 밖 | 파서·적재기·질의 CLI·Pi 스킬, SKOS 세부·소스 간 대응 | 실물·형식 명세 없이 만들면 인코딩·컬럼·규모(UMLS 수천만 행)를 추정하게 된다 |
+
