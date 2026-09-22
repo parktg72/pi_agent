@@ -506,3 +506,30 @@ def test_kg_budget_reads_the_slot_from_the_running_server(tmp_path):
 
     gone = kg_budget.main(["--env-file", str(env), "--base-url", "http://h:1"], fetch=down, process={})
     assert (ok, small, gone) == (0, 1, 1)
+
+
+# --- codex R6 반영 ------------------------------------------------------------------
+
+
+def test_the_fallback_env_parser_follows_dotenv_on_export_and_duplicates():
+    env = kg_budget.parse_env_file("SUMMARY_CONTEXT_SIZE=4000\nexport SUMMARY_CONTEXT_SIZE=12000\n")
+    assert env["SUMMARY_CONTEXT_SIZE"] == "12000"
+    merged = kg_budget.effective({**kg_budget.parse_env_file((WIN / "kg" / "lightrag.env").read_text(encoding="utf-8")), **env}, {})
+    assert any("SUMMARY_CONTEXT_SIZE" in p for p in kg_budget.check_budget(merged, 8192))
+
+
+@pytest.mark.parametrize("key", ["MAX_EXTRACT_INPUT_TOKENS", "OPENAI_LLM_MAX_TOKENS", "MAX_TOTAL_TOKENS", "CHUNK_SIZE"])
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_zero_or_negative_caps_are_refused_because_zero_can_mean_unlimited(key, value):
+    env = kg_budget.parse_env_file((WIN / "kg" / "lightrag.env").read_text(encoding="utf-8"))
+    env[key] = value
+    assert any(key in p and "양수" in p for p in kg_budget.check_budget(env, 8192))
+
+
+def test_the_skill_interpreter_guard_uses_only_the_bundle_venv():
+    text = (WIN / "pi-skills" / "graphify" / "SKILL.md").read_text(encoding="utf-8")
+    guard = text[text.index("## Interpreter guard for subcommands"):]
+    guard = guard[: guard.index("\n## ", 5)]
+    assert 'BUNDLE_PY="${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe"' in guard
+    assert "which graphify" not in guard and 'PYTHON="python3"' not in guard
+    assert '!= "$BUNDLE_EXE"' in guard  # 다른 인터프리터를 가리키는 기존 기록도 다시 쓴다

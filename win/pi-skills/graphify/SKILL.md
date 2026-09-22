@@ -636,16 +636,12 @@ The graph is the map. Your job after the pipeline is to be the guide.
 Before running any subcommand below (`--update`, `--cluster-only`, `query`, `path`, `explain`, `add`), check that `.graphify_python` exists. If it's missing (e.g. user deleted `graphify-out/`), re-resolve the interpreter first:
 
 ```bash
-if [ ! -f graphify-out/.graphify_python ]; then
-    GRAPHIFY_BIN=$(which graphify 2>/dev/null)
-    if [ -n "$GRAPHIFY_BIN" ]; then
-        PYTHON=$(head -1 "$GRAPHIFY_BIN" | tr -d '#!')
-        case "$PYTHON" in *[!a-zA-Z0-9/_.@-]*) PYTHON="python3" ;; esac
-    else
-        PYTHON="python3"
-    fi
+# 폐쇄망판: 인터프리터는 번들 venv로만 정한다. 기록이 없거나 다른 인터프리터를 가리키면 다시 쓴다.
+BUNDLE_PY="${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe"
+BUNDLE_EXE="$("$BUNDLE_PY" -c 'import sys; print(sys.executable)')" || { echo "번들 venv가 없다 - install-kg.bat을 먼저 실행하라" >&2; exit 1; }
+if [ ! -f graphify-out/.graphify_python ] || [ "$(cat graphify-out/.graphify_python)" != "$BUNDLE_EXE" ]; then
     mkdir -p graphify-out
-    "$PYTHON" -c "import sys; open('graphify-out/.graphify_python', 'w', encoding='utf-8').write(sys.executable)"
+    "$BUNDLE_PY" -c "import sys; open('graphify-out/.graphify_python', 'w', encoding='utf-8').write(sys.executable)"
 fi
 ```
 

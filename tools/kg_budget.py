@@ -41,9 +41,16 @@ KEYS = ("OPENAI_LLM_MAX_TOKENS", *LIGHTRAG_DEFAULTS)
 
 
 def parse_env_file(text: str) -> dict[str, str]:
+    """python-dotenv가 없을 때의 대체 파서(테스트·부트스트랩용). `export ` 접두어와 따옴표를 처리한다.
+
+    LightRAG와 같은 결과를 내려면 read_env_file()이 python-dotenv(dotenv_values)를 먼저 쓴다 -
+    KG venv에는 LightRAG 의존성으로 설치돼 있다(codex R6 #1).
+    """
     values: dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
@@ -52,6 +59,15 @@ def parse_env_file(text: str) -> dict[str, str]:
             value = value[1:-1]
         values[key.strip()] = value
     return values
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """LightRAG와 같은 파서로 .env를 읽는다: python-dotenv가 있으면 dotenv_values(변수 확장·export 포함)."""
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        return parse_env_file(path.read_text(encoding="utf-8"))
+    return {key: value for key, value in dotenv_values(path).items() if value is not None}
 
 
 def effective(env_file: Mapping[str, str], process: Mapping[str, str]) -> dict[str, str]:
@@ -71,10 +87,16 @@ def check_budget(env: Mapping[str, str], slot: int) -> list[str]:
         if raw == "":
             return LIGHTRAG_DEFAULTS.get(key)
         try:
-            return int(raw)
+            value = int(raw)
         except ValueError:
             problems.append(f"{key}={raw!r}가 정수가 아니다")
             return None
+        # 0이나 음수는 LightRAG에서 "제한 없음"이 되기도 한다(MAX_EXTRACT_INPUT_TOKENS=0이면
+        # gleaning 상한 검사를 건너뛴다 - operate.py `max_extract_input_tokens > 0`). 양수만 받는다.
+        if value <= 0:
+            problems.append(f"{key}={value}은 양수여야 한다 - 0 이하는 상한을 없애거나 요청을 깨뜨린다")
+            return None
+        return value
 
     out = number("OPENAI_LLM_MAX_TOKENS")
     if out is None:
@@ -113,7 +135,7 @@ def main(argv: list[str], fetch: Callable[[str], dict] | None = None, process: M
             return json.loads(response.read().decode("utf-8"))
 
     try:
-        env_file = parse_env_file(args.env_file.read_text(encoding="utf-8"))
+        env_file = read_env_file(args.env_file)
     except OSError as error:
         print(f"[FAIL] {args.env_file}를 읽지 못했다 - {error}", file=sys.stderr)
         return 1

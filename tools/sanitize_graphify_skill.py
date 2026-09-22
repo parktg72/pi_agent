@@ -50,6 +50,16 @@ mkdir -p graphify-out
 echo "$(cd INPUT_PATH && pwd)" > graphify-out/.graphify_root
 ```"""
 
+GUARD_BLOCK = """```bash
+# 폐쇄망판: 인터프리터는 번들 venv로만 정한다. 기록이 없거나 다른 인터프리터를 가리키면 다시 쓴다.
+BUNDLE_PY="${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe"
+BUNDLE_EXE="$("$BUNDLE_PY" -c 'import sys; print(sys.executable)')" || { echo "번들 venv가 없다 - install-kg.bat을 먼저 실행하라" >&2; exit 1; }
+if [ ! -f graphify-out/.graphify_python ] || [ "$(cat graphify-out/.graphify_python)" != "$BUNDLE_EXE" ]; then
+    mkdir -p graphify-out
+    "$BUNDLE_PY" -c "import sys; open('graphify-out/.graphify_python', 'w', encoding='utf-8').write(sys.executable)"
+fi
+```"""
+
 STEP25 = """### Step 2.5 - Video and audio (only if video files detected)
 
 폐쇄망판: 전사(Whisper)는 모델을 내려받으므로 하지 않는다. `detect`가 video 파일을 찾으면 목록만 사용자에게 알리고 그 파일들은 건너뛴다.
@@ -137,6 +147,10 @@ def sanitize_skill(text: str) -> str:
         "### Steps 6b-8 - Wiki, Neo4j, FalkorDB",
         where,
     )
+    guard_start = text.index("## Interpreter guard for subcommands")
+    block_start = text.index("```bash", guard_start)
+    block_end = text.index("```", block_start + len("```bash")) + len("```")
+    text = text[:block_start] + GUARD_BLOCK + text[block_end:]
     text = _replace_once(text, "If graphify saved you time, consider supporting it: https://github.com/sponsors/safishamsi\n\n", "", where)
     text = _replace_once(
         text,
