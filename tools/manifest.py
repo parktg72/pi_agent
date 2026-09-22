@@ -89,6 +89,14 @@ EXCLUDED_PATHS = (
     "models/Qwen3.8-27B-Uncensored-GGUF",
     "models/DeepSeek-R1-0528-Qwen3-8B-GGUF",
 )
+# 현장에서 바뀌거나 채워지는 경로(번들 루트 기준). 의료 용어 체계 덤프(data/)와 작성된 슬롯 기록
+# (slot.json)은 스테이징에서 넣을 수도, 폐쇄망 현장에서 넣을 수도 있다. 해시하면 현장에서 넣는 순간
+# unexpected:가 뜨므로 빼고, 전송 무결성은 slot.json의 파일별 sha256으로 tools/terminology_slots.py가
+# 검사한다(tasks/pi-agent-terminology 합의 1·2). 슬롯 README.md·slot.example.json은 해시한다.
+TERMINOLOGY_SOURCES = ("kcd8", "icd10", "atc", "umls", "omop")
+FIELD_PATHS = tuple(
+    path for source in TERMINOLOGY_SOURCES for path in (f"terminology/{source}/data", f"terminology/{source}/slot.json")
+)
 # 파이썬 바이트코드는 대상 PC에서 verify_bundle.py가 import되는 순간 다시
 # 쓰인다. 즉 검사 대상이 검사 도중 바뀐다. 깊이와 무관하게 제외한다.
 EXCLUDED_DIR_NAMES = ("__pycache__",)
@@ -116,6 +124,7 @@ def iter_immutable_files(root: Path) -> Iterator[tuple[str, Path]]:
             if name not in EXCLUDED_DIR_NAMES
             and not (at_top and name in EXCLUDED_ROOTS)
             and (relative_dir / name).as_posix() not in EXCLUDED_PATHS
+            and (relative_dir / name).as_posix() not in FIELD_PATHS
         ]
         for name in sorted(filenames):
             if at_top and name in EXCLUDED_FILES:
@@ -123,7 +132,7 @@ def iter_immutable_files(root: Path) -> Iterator[tuple[str, Path]]:
             if name.endswith(EXCLUDED_SUFFIXES):
                 continue
             relative = (relative_dir / name).as_posix()
-            if relative in EXCLUDED_PATHS:
+            if relative in EXCLUDED_PATHS or relative in FIELD_PATHS:
                 continue
             yield relative, Path(dirpath) / name
 
@@ -144,6 +153,7 @@ def build(root: Path, staged_at: str, target: str) -> dict:
         "excludedDirNames": list(EXCLUDED_DIR_NAMES),
         "excludedSuffixes": list(EXCLUDED_SUFFIXES),
         "excludedPaths": list(EXCLUDED_PATHS),
+        "fieldPaths": list(FIELD_PATHS),
         "totals": {"files": len(files), "bytes": total_bytes},
         "files": files,
     }
