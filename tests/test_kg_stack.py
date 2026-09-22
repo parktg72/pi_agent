@@ -533,3 +533,28 @@ def test_the_skill_interpreter_guard_uses_only_the_bundle_venv():
     assert 'BUNDLE_PY="${PI_AGENT_ROOT:-/c/pi_agent}/home/kg/venv/Scripts/python.exe"' in guard
     assert "which graphify" not in guard and 'PYTHON="python3"' not in guard
     assert '!= "$BUNDLE_EXE"' in guard  # 다른 인터프리터를 가리키는 기존 기록도 다시 쓴다
+
+
+def test_env_reading_uses_dotenv_with_lightrags_override_false(tmp_path, monkeypatch):
+    # dotenv_values()는 ${VAR} 확장에서 .env를 우선한다(override=True) - LightRAG와 다르다(codex R7 #1).
+    import types
+
+    seen = {}
+
+    class FakeDotEnv:
+        def __init__(self, path, **kwargs):
+            seen.update(kwargs)
+
+        def dict(self):
+            return {"SUMMARY_CONTEXT_SIZE": "12000", "EMPTY": None}
+
+    main = types.ModuleType("dotenv.main")
+    main.DotEnv = FakeDotEnv
+    package = types.ModuleType("dotenv")
+    package.main = main
+    monkeypatch.setitem(sys.modules, "dotenv", package)
+    monkeypatch.setitem(sys.modules, "dotenv.main", main)
+    env = tmp_path / ".env"
+    env.write_text("X=1\n", encoding="utf-8")
+    assert kg_budget.read_env_file(env) == {"SUMMARY_CONTEXT_SIZE": "12000"}
+    assert seen.get("override") is False and seen.get("interpolate") is True

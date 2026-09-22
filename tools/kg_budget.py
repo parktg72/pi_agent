@@ -62,12 +62,18 @@ def parse_env_file(text: str) -> dict[str, str]:
 
 
 def read_env_file(path: Path) -> dict[str, str]:
-    """LightRAG와 같은 파서로 .env를 읽는다: python-dotenv가 있으면 dotenv_values(변수 확장·export 포함)."""
+    """LightRAG와 같은 파서·같은 우선순위로 .env를 읽는다.
+
+    LightRAG는 load_dotenv(override=False)다: `${VAR}` 확장도 프로세스 환경을 먼저 본다.
+    dotenv_values()는 확장 때 .env 값을 먼저 봐서(override=True) 결과가 달라질 수 있다
+    (codex R7 #1) - DotEnv(override=False)를 직접 쓴다.
+    """
     try:
-        from dotenv import dotenv_values
+        from dotenv.main import DotEnv
     except ImportError:
         return parse_env_file(path.read_text(encoding="utf-8"))
-    return {key: value for key, value in dotenv_values(path).items() if value is not None}
+    values = DotEnv(path, encoding="utf-8", interpolate=True, override=False).dict()
+    return {key: value for key, value in values.items() if value is not None}
 
 
 def effective(env_file: Mapping[str, str], process: Mapping[str, str]) -> dict[str, str]:
