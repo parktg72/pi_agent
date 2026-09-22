@@ -59,18 +59,39 @@ def data_files(slot: Path) -> list[str]:
     return sorted(p.relative_to(data).as_posix() for p in data.rglob("*") if p.is_file() or p.is_symlink())
 
 
+def _is_link(path: Path) -> bool:
+    # Windows junction은 is_symlink()로 잡히지 않는다(Python 3.12 Path.is_junction, codex R5 #1).
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or bool(is_junction and is_junction())
+
+
+def _inside(path: Path, base: Path) -> bool:
+    try:
+        path.resolve().relative_to(base.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def layout_problems(slot: Path) -> list[str]:
-    """슬롯 구조 자체의 문제: data가 폴더가 아님, 링크, 슬롯 루트에 잘못 둔 파일(codex R4 #1·#2·#3)."""
+    """슬롯 구조 자체의 문제: 링크·junction, data가 폴더가 아님, 슬롯 루트에 잘못 둔 파일(codex R4·R5)."""
     problems: list[str] = []
+    top = slot.parent
+    if _is_link(slot) or (slot.exists() and not _inside(slot, top)):
+        return ["슬롯 폴더가 링크·junction이다 - 번들 밖을 가리킬 수 있어 받지 않는다"]
     data = slot / "data"
+    for name in ("slot.json", "data"):
+        path = slot / name
+        if _is_link(path) or (path.exists() and not _inside(path, slot)):
+            problems.append(f"{name}이 링크·junction이다 - 슬롯 밖의 파일을 읽거나 덮어쓸 수 있어 받지 않는다")
+    if problems:
+        return problems
     if data.exists() and not data.is_dir():
         problems.append("data가 폴더가 아니다 - 덤프는 data\\ 폴더 안에 둔다")
-    if data.is_symlink():
-        problems.append("data가 링크다 - 슬롯 밖을 가리킬 수 있어 받지 않는다")
     elif data.is_dir():
         for path in data.rglob("*"):
-            if path.is_symlink():
-                problems.append(f"data/{path.relative_to(data).as_posix()}가 링크다 - 실제 파일만 둔다")
+            if _is_link(path) or not _inside(path, data):
+                problems.append(f"data/{path.relative_to(data).as_posix()}가 링크·junction이다 - 실제 파일만 둔다")
     if slot.is_dir():
         for entry in sorted(slot.iterdir()):
             if entry.name not in SLOT_ENTRIES:
@@ -184,7 +205,11 @@ def record(root: Path, source: str) -> tuple[bool, str]:
         # 이전 자료에 대한 승인이 새 파일로 넘어가지 않게 한다(codex R3 FIX 2).
         document["review_status"] = "unreviewed"
         reset = True
-    (slot / "slot.json").write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    target = slot / "slot.json"
+    # 쓰기 직전에 다시 확인한다: 검사 뒤 링크로 바뀌었어도 슬롯 밖을 덮어쓰지 않는다.
+    if _is_link(target) or (target.exists() and not _inside(target, slot)):
+        return False, "slot.json이 링크·junction이다 - 쓰지 않았다"
+    target.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     note = " - 파일이 바뀌어 review_status를 unreviewed로 되돌렸다. 재검토 후 approved로 쓴다" if reset else ""
     return True, f"terminology/{source}/slot.json에 파일 {len(files)}개를 기록했다{note}"
 

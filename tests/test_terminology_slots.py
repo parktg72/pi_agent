@@ -298,3 +298,40 @@ def test_unknown_entries_at_the_terminology_root_fail_the_check(tmp_path):
     slot_tree(tmp_path)
     (tmp_path / "terminology" / "snomed").mkdir()
     assert ts.main(["--root", str(tmp_path), "check"]) == 1
+
+
+# --- codex R5 반영 ------------------------------------------------------------------
+
+
+def test_a_symlinked_slot_json_is_refused_and_never_written_through(tmp_path):
+    slot = slot_tree(tmp_path)
+    put(slot, "a.csv", b"1")
+    outside = tmp_path / "victim.txt"
+    outside.write_text("keep me", encoding="utf-8")
+    (slot / "slot.json").symlink_to(outside)
+    assert ts.check_slot(tmp_path, "umls")[0] == "incomplete"
+    ok, message = ts.record(tmp_path, "umls")
+    assert not ok and "링크" in message
+    assert outside.read_text(encoding="utf-8") == "keep me"
+
+
+def test_a_symlinked_data_folder_or_slot_is_refused(tmp_path):
+    slot = slot_tree(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "a.csv").write_bytes(b"1")
+    (slot / "data").symlink_to(elsewhere, target_is_directory=True)
+    assert ts.check_slot(tmp_path, "umls")[0] == "incomplete"
+    other = slot_tree(tmp_path / "t2", "omop")
+    shutil.rmtree(other)
+    other.symlink_to(elsewhere, target_is_directory=True)
+    assert ts.check_slot(tmp_path / "t2", "omop")[0] == "incomplete"
+
+
+def test_junctions_count_as_links(tmp_path, monkeypatch):
+    slot = slot_tree(tmp_path)
+    (slot / "data").mkdir()
+    target = slot / "data"
+    monkeypatch.setattr(Path, "is_junction", lambda self: self == target, raising=False)
+    status, problems = ts.check_slot(tmp_path, "umls")
+    assert status == "incomplete" and any("junction" in p for p in problems)
