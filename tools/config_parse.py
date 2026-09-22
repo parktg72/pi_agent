@@ -117,7 +117,7 @@ def _check_filename(value: str) -> str | None:
     relative = "models/" + value.replace("\\", "/").lstrip("/")
     for excluded in EXCLUDED_PATHS:
         if relative == excluded or relative.startswith(excluded + "/"):
-            return f"{excluded}는 반입 대상이 아니라 매니페스트가 검사하지 않는다 - 반입 모델(Q6_K·Q4_K_M)을 쓴다"
+            return f"{excluded}는 반입 대상이 아니라 매니페스트가 검사하지 않는다 - 반입 모델(UD-Q5_K_M·Q6_K·Q4_K_M)을 쓴다"
     return None
 
 
@@ -133,11 +133,26 @@ def _check_tensor_split(value: str) -> str | None:
     return None
 
 
-# KV 캐시 타입. q8_0은 VRAM이 빠듯한 양자화(Q6_K 등)에서 쓰고, 그보다 낮은
-# 비트는 품질 손실 대비 이득이 작아 받지 않는다. 양자화 KV는 flash-attn을
-# 요구하는데 start-llama.bat이 -fa on을 고정한다(b11010 fattn.cu: Pascal은
-# tile/vec 커널로 동작).
+# K 캐시 타입(2026-09-22 KG 정렬부터 K에만 적용된다 - start-llama.bat이 -ctv f16을
+# 고정한다). 양자화 V 캐시는 flash attention을 전제로 하고, LLAMA_FLASH_ATTN=off거나
+# auto가 장치에서 꺼지면 V를 양자화할 수 없다. K 양자화는 FA 없이도 동작한다
+# (폐쇄망지식그래프 02_llamacpp_설정가이드 §2, tasks/pi-agent-kg-align 합의 3).
+# 그보다 낮은 비트는 품질 손실 대비 이득이 작아 받지 않는다.
 KV_TYPES = ("f16", "q8_0")
+# flash attention. auto는 장치를 probe해 못 쓰면 끄고 로그를 남긴다(b11010
+# src/llama-context.cpp). b11010 ggml-cuda/fattn.cu는 텐서코어 없는 GPU의 head 256을
+# tile/vec 커널로 지원한다. off는 폐쇄망지식그래프 문서의 설정으로, 리허설 11-2에서
+# auto와 비교한다. on은 probe를 건너뛰어 지원 안 되는 장치면 연산이 CPU로 가므로 받지 않는다.
+FLASH_ATTN_MODES = ("auto", "off")
+# LoRA 어댑터를 붙여도 되는 기반 모델. 어댑터 적재·도구 왕복·템플릿 일치를 확인한
+# 조합만 둔다(C단계 사전 시험은 Q6_K). UD-Q5_K_M은 내장 템플릿이 다르고 적재 검증 전이라
+# 코드로 막는다(tasks/pi-agent-kg-align 합의 9) - 검증하면 여기에 추가한다.
+LORA_VERIFIED_BASES = ("Qwen3.8-27B-Q6_K.gguf",)
+# -b(논리 배치)를 start-llama.bat이 1024로 고정한다. -ub가 그보다 크면 의미가 없다.
+LLAMA_BATCH = 1024
+# kg 프로파일 슬롯 창 하한. kg\\lightrag.env의 요청 상한(입력 4000 + 출력 2500 등)이 이 크기를
+# 가정한다(codex R4 #7). start-lightrag.bat도 떠 있는 서버를 같은 값으로 확인한다.
+KG_MIN_SLOT_CTX = 8192
 
 
 def _check_kv_type(value: str) -> str | None:
@@ -147,9 +162,38 @@ def _check_kv_type(value: str) -> str | None:
 
 
 def _check_ubatch(value: str) -> str | None:
-    # 현장 대응용(WDDM TDR 등). 2의 거듭제곱 16~2048만 받는다 - 기본 -b 2048을 넘기지 않는다.
-    if not value.isdigit() or int(value) not in (16, 32, 64, 128, 256, 512, 1024, 2048):
-        return "16~2048 사이의 2의 거듭제곱이어야 한다(예: 256)"
+    # 2의 거듭제곱 16~1024만 받는다 - start-llama.bat이 고정한 -b 1024를 넘기지 않는다
+    # (codex R3 FIX 6). 기본 256은 vocab 248,320의 logits 버퍼를 줄이려는 값이다.
+    if not value.isdigit() or int(value) not in (16, 32, 64, 128, 256, 512, LLAMA_BATCH):
+        return f"16~{LLAMA_BATCH} 사이의 2의 거듭제곱이어야 한다(예: 256) - -b {LLAMA_BATCH}를 넘길 수 없다"
+    return None
+
+
+def _check_flash_attn(value: str) -> str | None:
+    if value not in FLASH_ATTN_MODES:
+        return f"{' | '.join(FLASH_ATTN_MODES)} 중 하나여야 한다 - on은 장치 probe를 건너뛰어 받지 않는다"
+    return None
+
+
+def _check_kg_parallel(value: str) -> str | None:
+    if not value.isdigit() or not (1 <= int(value) <= 4):
+        return "1~4 사이의 정수여야 한다"
+    return None
+
+
+def _check_gpu_index(value: str) -> str | None:
+    if not value.isdigit() or not (0 <= int(value) <= 7):
+        return "0~7 사이의 GPU 번호여야 한다(nvidia-smi의 index)"
+    return None
+
+
+def _check_chat_template(value: str) -> str | None:
+    # chat-templates\ 바로 아래 파일 이름만 받는다. --chat-template-file 경로에 끼워 넣으므로
+    # 경로 구분자·괄호를 막는다(LORA_FILE과 같은 이유).
+    if ".." in value or not re.fullmatch(r"[A-Za-z0-9._-]+", value):
+        return "chat-templates\\ 바로 아래의 파일 이름만 쓴다(영문·숫자·._- 만)"
+    if not value.lower().endswith(".jinja"):
+        return "jinja 템플릿(.jinja)이어야 한다"
     return None
 
 
@@ -211,6 +255,17 @@ ALLOWED_KEYS: dict[str, object] = {
     "LORA_SCALE": _check_lora_scale,
     # pi-extensions\learning.ts 자동 반성. start-pi.bat이 환경변수로 넘기고 확장이 읽는다.
     "LEARNING_AUTO_REFLECT": _check_flag,
+    # 2026-09-22 KG 정렬(tasks/pi-agent-kg-align 합의). 비우면 start-*.bat의 기본값을 쓴다.
+    "LLAMA_FLASH_ATTN": _check_flash_attn,
+    # chat-templates\ 아래 템플릿으로 모델 내장 템플릿을 덮는다. 비우면 내장 템플릿.
+    "CHAT_TEMPLATE_FILE": _check_chat_template,
+    # start-llama.bat kg 프로파일(LightRAG 엔티티 추출). 슬롯당 창 = KG_CTX / KG_PARALLEL.
+    "KG_CTX": _check_context,
+    "KG_PARALLEL": _check_kg_parallel,
+    # start-embedding.bat(bge-m3). EMBED_GPU는 CUDA_VISIBLE_DEVICES로 넘긴다.
+    "EMBED_MODEL_FILE": _check_filename,
+    "EMBED_PORT": _check_port,
+    "EMBED_GPU": _check_gpu_index,
 }
 
 
@@ -266,7 +321,36 @@ def parse_text(text: str) -> tuple[dict[str, str], list[str]]:
                 f"PI_MODEL_ID={model_id}의 뒷부분이 MODEL_ALIAS={alias}와 글자 그대로 같지 않다 - "
                 "Pi가 llama-server에 없는 모델 ID를 요청하게 된다"
             )
+    problems.extend(cross_check(values))
     return values, problems
+
+
+def cross_check(values: dict[str, str]) -> list[str]:
+    """키 하나로는 판단할 수 없는 조합을 거부한다."""
+    problems: list[str] = []
+    lora = values.get("LORA_FILE", "")
+    model = values.get("MODEL_FILE", "")
+    if lora and model and model not in LORA_VERIFIED_BASES:
+        problems.append(
+            f"LORA_FILE={lora}은 검증된 기반 모델({', '.join(LORA_VERIFIED_BASES)})에서만 쓴다 - "
+            f"MODEL_FILE={model}은 어댑터 적재·템플릿 일치를 확인하지 않았다. LORA_FILE을 비우거나 "
+            "MODEL_FILE을 검증된 모델로 바꿔라"
+        )
+    kg_ctx = values.get("KG_CTX", "")
+    kg_parallel = values.get("KG_PARALLEL", "")
+    if kg_ctx and kg_parallel and kg_ctx.isdigit() and kg_parallel.isdigit():
+        if int(kg_ctx) % int(kg_parallel):
+            problems.append(f"KG_CTX={kg_ctx}가 KG_PARALLEL={kg_parallel}로 나누어떨어지지 않는다 - 슬롯 창이 어긋난다")
+        elif int(kg_ctx) // int(kg_parallel) < KG_MIN_SLOT_CTX:
+            problems.append(
+                f"KG 슬롯당 창 {int(kg_ctx) // int(kg_parallel)}이 {KG_MIN_SLOT_CTX}보다 작다 - kg\\lightrag.env의 "
+                "요청 상한이 이 크기를 가정한다. KG_CTX를 늘리거나 KG_PARALLEL을 줄여라"
+            )
+    llama_port = values.get("LLAMA_PORT", "")
+    embed_port = values.get("EMBED_PORT", "")
+    if llama_port and embed_port and llama_port == embed_port:
+        problems.append(f"EMBED_PORT={embed_port}가 LLAMA_PORT와 같다 - 두 서버가 한 포트를 두고 다툰다")
+    return problems
 
 
 def render_cmd(values: dict[str, str]) -> str:

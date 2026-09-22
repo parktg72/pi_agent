@@ -127,6 +127,12 @@ def _model_check(root: Path) -> int:
         if architecture == "clip" and model.name.lower().startswith("mmproj"):
             print(f"[skip] {model.name} - 비전 프로젝터(clip), 채팅 템플릿 검사 대상 아님")
             continue
+        # 임베딩 모델(bge-m3, general.architecture=bert)도 채팅 템플릿이 없다. 면제는
+        # 파일 이름이 bge-로 시작하고 아키텍처가 bert일 때만 준다 - mmproj와 같은 이유로
+        # 이름만 맞는 채팅 모델은 그대로 검사한다(tasks/pi-agent-kg-align 합의 4).
+        if architecture == "bert" and model.name.lower().startswith("bge-"):
+            print(f"[skip] {model.name} - 임베딩 모델(bert), 채팅 템플릿 검사 대상 아님")
+            continue
         checked += 1
         found = gguf.check_tool_capable(model)
         problems += found

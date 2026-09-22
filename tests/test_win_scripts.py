@@ -98,8 +98,10 @@ def test_no_unescaped_parens_in_echo_or_rem_lines_inside_blocks():
 
 def test_start_llama_pins_the_required_server_arguments():
     body = read("start-llama.bat")
-    for required in ("--jinja", "--host 127.0.0.1", "-ngl 999", "--parallel 1", "-sm layer"):
+    for required in ("--jinja", "--host 127.0.0.1", "-ngl 999", "--parallel %PARALLEL%", "-sm layer"):
         assert required in body, required
+    # Pi 프로파일은 슬롯 1개(2026-09-22 kg 프로파일 추가 뒤에도).
+    assert 'set "PARALLEL=1"' in body
 
 
 def test_start_llama_never_hardcodes_a_tensor_split():
@@ -1152,7 +1154,7 @@ def test_start_pi_passes_the_pi_exit_code_through_unchanged():
     body = read("start-pi.bat")
     launch = (
         '"%ROOT%bin\\pi\\pi.exe" --offline --model "%PI_MODEL_ID%" '
-        '--thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %*'
+        '--thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %SKILL_ARG% %*'
     )
     assert launch in body
     after = body[body.index(launch) + len(launch) :]

@@ -60,6 +60,19 @@ if errorlevel 1 (
   echo [FAIL] the model is not ready - not starting Pi
   exit /b 3
 )
+rem The same port can carry start-llama.bat kg, the LightRAG extraction server
+rem (several slots of 8192 by default). Pi's first request alone is about 13k
+rem tokens, so attaching there breaks the first turn. /props says how many slots
+rem the server has, how large each one is and which chat template it serves;
+rem anything but one slot of LLAMA_CTX (and the pinned template, if one is set)
+rem is refused, and so is a server that cannot be asked.
+set "TEMPLATE_CHECK_ARG="
+if defined CHAT_TEMPLATE_FILE set TEMPLATE_CHECK_ARG=--template-file "%ROOT%chat-templates\%CHAT_TEMPLATE_FILE%"
+%PYTHON_CMD% "%ROOT%tools\server_profile.py" --base-url "%LLAMA_BASE_URL%" --ctx "%LLAMA_CTX%" %TEMPLATE_CHECK_ARG%
+if errorlevel 1 (
+  echo [FAIL] the llama-server on this port is not the Pi profile - not starting Pi
+  exit /b 11
+)
 
 rem If LLAMA_BASE_URL is still set, pi.exe's built-in llama.cpp provider is
 rem treated as authenticated and shows up in the model list. That provider
@@ -102,7 +115,19 @@ rem training samples exactly as the model saw them.
 set "EXT_ARG="
 if exist "%ROOT%pi-extensions\learning.ts" set EXT_ARG=--extension "%ROOT%pi-extensions\learning.ts"
 if exist "%ROOT%pi-extensions\lora-snapshot.ts" set EXT_ARG=%EXT_ARG% --extension "%ROOT%pi-extensions\lora-snapshot.ts"
-"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %*
+rem graphify skill (code/docs to knowledge graph), the offline copy from the
+rem closed-network KG bundle with GitHub clone, pip/uv install, Gemini, Whisper
+rem and Neo4j/FalkorDB push removed. Only its name and description enter the
+rem prompt until it is used. It runs graphify from home\kg\venv (install-kg.bat).
+set "SKILL_ARG="
+if exist "%ROOT%pi-skills\graphify\SKILL.md" set SKILL_ARG=--skill "%ROOT%pi-skills\graphify"
+rem The skill's bash blocks find the bundle through PI_AGENT_ROOT, written with
+rem forward slashes and no trailing separator so Git Bash can join paths to it.
+rem They run graphify as home\kg\venv\Scripts\python.exe -m graphify, never from
+rem PATH, so another graphify on this PC cannot mix into a bundle run.
+set "PI_AGENT_ROOT=%ROOT:\=/%"
+set "PI_AGENT_ROOT=%PI_AGENT_ROOT:~0,-1%"
+"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %SKILL_ARG% %*
 exit /b %errorlevel%
 
 :place_models_json

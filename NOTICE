@@ -47,3 +47,25 @@ MIT License notice for the borrowed guidelines text:
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+
+graphify skill (offline copy)
+-----------------------------
+
+`win/pi-skills/graphify/` (staged to `pi-skills/graphify/`) is a modified copy of
+the agent skill shipped with graphify:
+
+  - Source:  graphifyy 0.9.65 (https://github.com/Graphify-Labs/graphify),
+             `SKILL-agents.md` and `references/`, as carried in the
+             closed-network knowledge-graph bundle on 2026-09-22
+  - License: Apache License 2.0 — the upstream LICENSE and NOTICE are kept next
+             to the copy (`win/pi-skills/graphify/LICENSE`, `NOTICE`)
+
+Modifications in this project (produced by `tools/sanitize_graphify_skill.py`,
+each marked "폐쇄망판" in the text): GitHub clone, pip/uv installation, Gemini API
+use, Whisper transcription, URL ingestion and Neo4j/FalkorDB push were removed;
+the interpreter is fixed to the bundle's `home/kg/venv`; every graphify command
+runs as `python -m graphify` from that venv; HTML output is rewritten to local
+copies of its JavaScript libraries by `tools/graphify_offline_html.py`; the
+references `github-and-merge.md` and `transcribe.md` were dropped.
+

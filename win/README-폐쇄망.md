@@ -15,6 +15,7 @@
 | 4 | `start-llama.bat` | **매번**, 가장 먼저 | 전용 창 — 닫지 않는다 |
 | 5 | `start-pi.bat` | **매번**, 4번 다음 | 작업 폴더에서 |
 | 6 | `verify-offline.bat` | 최초 1회 + 문제 생겼을 때 | 아무 창 |
+| 7 | `install-kg.bat` → `start-llama.bat kg` + `start-embedding.bat` + `start-lightrag.bat` | 지식그래프 작업이 필요할 때만 | 아래 "지식그래프 스택" 절 |
 
 **매번 반복되는 것은 4→5 둘뿐이다.** 나머지는 처음 한 번이다.
 
@@ -27,11 +28,12 @@
 윈도우면 CP949)로 나가고, 한글 진단 메시지가 깨진다(2026-08-18 윈도우 실측 —
 "간단하니 직접 부르자"로 되돌리지 마라).
 
-**2 — 현장에서 채울 값은 `GPU_TENSOR_SPLIT` 하나다.** 나머지(`MODEL_FILE`,
+**2 — 현장에서 확인할 값은 `GPU_TENSOR_SPLIT` 하나다.** 나머지(`MODEL_FILE`,
 `MODEL_ALIAS`, `PI_MODEL_ID`, `MMPROJ_FILE`, `MODEL_LOAD_TIMEOUT`)는 반입 시점에
-이미 채워져 있다. `nvidia-smi` 로 GPU별 여유 VRAM을 보고 그 비율을 넣는다.
-비워두면 llama.cpp 기본 분배를 쓴다. `1,1,1` 로 고정하지 않는다 — 디스플레이가
-붙은 GPU의 실여유가 다른 두 장보다 적다.
+이미 채워져 있다. 반입값은 지식그래프 번들의 시작값 `10,11,8` 이다 — 0번은 화면
+출력, 2번은 임베딩 서버(bge-m3, 약 1.2 GB)와 같이 쓰므로 둘 다 덜 준다. 이 PC의
+`nvidia-smi` 여유 VRAM으로 다시 정한다. 비우면 llama.cpp 기본 분배를 쓴다.
+`1,1,1` 로 고정하지 않는다 — 디스플레이가 붙은 GPU의 실여유가 다른 두 장보다 적다.
 
 비율을 손으로 정하기 어렵다면 같은 폴더의 `llama-fit-params.exe` 가 현재 여유
 VRAM에서 맞는 분배를 계산해 출력한다(llama.cpp b11010 `tools/fit-params`).
@@ -40,7 +42,7 @@ VRAM에서 맞는 분배를 계산해 출력한다(llama.cpp b11010 `tools/fit-p
 
 ```
 cd C:\pi_agent
-bin\llama-cuda\llama-fit-params.exe -m models\Qwen3.8-27B-Q6_K.gguf -c 63488 -sm layer
+bin\llama-cuda\llama-fit-params.exe -m models\Qwen3.8-27B-UD-Q5_K_M.gguf -c 63488 -sm layer -ctk q8_0 -ctv f16
 ```
 
 출력에 `-ngl` 이 전체 층 수보다 작게 나오면 모델이 VRAM에 다 안 들어간다는
@@ -294,13 +296,13 @@ UTF-8로 정상 출력된다.
   이 모델에는 쓰지 않는다. `cpu`로 바꿔 원인을 좁힌다 — 느리지만 정확하다.
   30B 모델 실사용 속도가 나오지 않으므로 CPU는 진단용이고, 그래서
   `config.env` 에 `ALLOW_CPU_DIAGNOSTIC=1` 을 명시해야만 뜬다(없으면 exit 9).
-  22.4GB(Q6_K)를 시스템 RAM에 올리는 일이라 사고로 선택되면 안 된다 — RAM이나
+  약 20GB(UD-Q5_K_M)를 시스템 RAM에 올리는 일이라 사고로 선택되면 안 된다 — RAM이나
   페이지파일이 모자라면 실패하는 대신 오래 스래싱한다.
 - `MSVCP140.dll` 관련 오류가 나면 `bin\llama-cuda` 안의 app-local DLL이 지워졌는지 확인한다.
 - 긴 프롬프트를 처리하다 화면이 잠깐 꺼지며 "디스플레이 드라이버 응답 중지 후 복구"
-  (이벤트 뷰어 `nvlddmkm`, TDR)가 뜨고 llama-server가 죽으면, `config.env` 에
-  `LLAMA_UBATCH=256`(그래도면 128)을 넣고 다시 띄운다. 기본값(비움 = 512)은 아직
-  이 PC에서 TDR이 관측된 적이 없어 바꾸지 않았다 — 리허설 §11-14.
+  (이벤트 뷰어 `nvlddmkm`, TDR)가 뜨고 llama-server가 죽으면, `config.env` 의
+  `LLAMA_UBATCH` 를 128로 낮추고 다시 띄운다. 기본은 256이다(2026-09-22 지식그래프
+  번들 정렬 — vocab 248,320의 logits 버퍼를 줄이려는 값). 리허설 §11-14.
 
 ## Pi 확장·스킬 (pi-packages)
 
@@ -447,29 +449,33 @@ Pi 0.85.1은 긴 작업을 이렇게 멈춘다(소스 추적, 2026-09-17):
 
 ## 설정 최적화 (GTX 1080 Ti ×3, RAM 128GB)
 
-`config.env.example` 에 2026-09-17 추가된 키들이다. 근거는 llama.cpp b11010
-소스이고, **VRAM·토큰/초 효과는 이 PC에서 아직 아무도 재지 않았다** — 리허설이
-각 항목의 전후를 기록한다.
+`config.env.example` 에 2026-09-17 추가되고 2026-09-22 지식그래프 번들(`폐쇄망지식그래프`)에
+맞춰 바뀐 키들이다. 근거는 llama.cpp b11010 소스와 pane 합의(`tasks/pi-agent-kg-align`)이고,
+**VRAM·토큰/초 효과는 이 PC에서 아직 아무도 재지 않았다** — 리허설이 각 항목을 기록한다.
 
 | 키 | `config.env.example` 값 (키가 비었을 때) | 무엇을 하나 |
 |---|---|---|
-| (고정) `-fa auto` | 항상 | flash attention. Pascal은 텐서코어가 없어 tile/vec 커널로 돈다(`ggml-cuda/fattn.cu`). `auto` 는 장치에서 돌 수 있는지 먼저 시험하고 기동 로그에 `flash_attn enabled` 또는 `not supported, set to disabled` 를 남긴다 — `on` 으로 강제하면 그 시험을 건너뛰어 안 될 때 연산이 CPU로 간다. 기동 로그에서 이 줄을 확인한다 |
-| `LLAMA_CTX` | 63488 (63488) | 서버 컨텍스트이자 Pi의 `contextWindow`. qwen35는 전체 어텐션 16층만 KV를 가져 63488에서 KV 약 3.9 GiB(f16). **256의 배수만 받는다** — llama-server가 256 단위로 올려 잡아서 배수가 아니면 Pi의 창과 어긋난다(`config.env` 검사가 거부) |
-| `LLAMA_KV_TYPE` | `f16` (`f16`) | `q8_0` 이면 저장되는 KV가 절반. 다만 Pascal의 prefill 커널(tile)은 F16 임시 사본으로 계산하므로 최대 사용량 절감은 그보다 작다. Q6_K(20.9 GiB)나 더 긴 컨텍스트의 리허설 후보이지 보장된 해결책이 아니다 |
-| `LLAMA_CACHE_RAM_MIB` | 32768 (llama.cpp 기본 8192) | 프롬프트 캐시를 시스템 RAM에 둔다. 슬롯이 하나라 서브에이전트 턴이 본 세션의 KV를 밀어내는데, 이 캐시가 있으면 다음 턴에 전체 이력을 다시 prefill하지 않는다 — Pascal에서 가장 느린 단계다 |
-| `LLAMA_UBATCH` | 비움 (llama.cpp 기본 512) | prefill 물리 배치. TDR(디스플레이 드라이버 재시작) 증상이 있을 때만 256→128로 낮춘다 |
-| `LLAMA_SPEC_MTP` | `0` (꺼짐) | 모델 내장 MTP 층으로 추측 디코딩(`--spec-type draft-mtp`). 하이브리드 모델은 되감기에 체크포인트를 쓰므로 Pascal에서 이득이 있는지 모른다 — 리허설 A/B 후 켠다 |
+| `LLAMA_FLASH_ATTN` | `auto` (`auto`) | flash attention. `auto` 는 장치에서 돌 수 있는지 먼저 시험하고 기동 로그에 `flash_attn enabled` 또는 `not supported, set to disabled` 를 남긴다. b11010은 텐서코어 없는 GPU의 head 256을 tile/vec 커널로 지원한다(`ggml-cuda/fattn.cu`). `off` 는 지식그래프 번들 가이드의 설정인데, 그 가이드가 인용한 "head size 64/128만 지원" 오류는 b11010에 없다 — 구버전 기준이다. 리허설 §11-2가 둘을 비교한다. `on` 은 시험을 건너뛰어 안 될 때 연산이 CPU로 가므로 받지 않는다 |
+| `LLAMA_CTX` | 63488 (63488) | Pi 프로파일의 서버 컨텍스트이자 Pi의 `contextWindow`. qwen35는 전체 어텐션 16층만 KV를 가져 63488에서 KV 약 3.9 GiB(f16), K q8_0이면 약 2.9 GiB. **256의 배수만 받는다** |
+| `LLAMA_KV_TYPE` | `q8_0` (`q8_0`) | **2026-09-22부터 K 캐시에만 적용된다.** V 캐시는 `f16` 고정 — 양자화 V는 flash attention이 전제인데 FA가 `off` 거나 `auto` 가 꺼질 수 있다. K q8_0은 FA 없이도 되고 KV를 약 25% 줄인다 |
+| `CHAT_TEMPLATE_FILE` | `qwen38-c3cf9e34.jinja` (모델 내장 템플릿) | `chat-templates\` 의 템플릿을 `--chat-template-file` 로 쓴다. 원본 Qwen3.8 템플릿(Q6_K 내장본, sha256 `c3cf9e34…`)이다 — 도구 왕복·렌더 일치·LoRA 데이터가 모두 이것으로 검증됐다. UD-Q5_K_M 파일에는 Unsloth 변형 템플릿(시스템 메시지 병합, 문자열 도구 인자 예외)이 들어 있다. `start-pi.bat` 이 서버가 이 템플릿을 쓰는지 `/props` 로 확인한다 |
+| `LLAMA_CACHE_RAM_MIB` | 32768 (llama.cpp 기본 8192) | 프롬프트 캐시를 시스템 RAM에 둔다. 슬롯이 하나라 서브에이전트 턴이 본 세션의 KV를 밀어내는데, 이 캐시가 있으면 다음 턴에 전체 이력을 다시 prefill하지 않는다 |
+| `LLAMA_UBATCH` | `256` (`256`) | prefill 물리 배치. 논리 배치 `-b` 는 1024 고정이라 그보다 크게는 못 준다. TDR 증상이 있으면 128 |
+| (고정) `-b 1024`, `--no-mmap`, `-sm layer` | 항상 | 지식그래프 번들 가이드의 값. `--no-mmap` 은 윈도우에서 초기 적재를 안정시키려는 것, `-sm tensor` 는 FA가 필요해 쓰지 않는다 |
+| `LLAMA_SPEC_MTP` | `0` (꺼짐) | 모델 내장 MTP 층으로 추측 디코딩. 리허설 A/B 후 켠다 |
 | `LEARNING_AUTO_REFLECT` | `1` (켜짐) | 학습 확장의 자동 반성. 위 "학습 확장" 절 |
-| `LORA_FILE` / `LORA_SCALE` | 비움 / 1.0 (어댑터 없음 / 1.0) | 아래 "LoRA" 절 |
+| `LORA_FILE` / `LORA_SCALE` | 비움 / 1.0 | 아래 "LoRA" 절. **어댑터는 `MODEL_FILE=Qwen3.8-27B-Q6_K.gguf` 에서만 받는다** — UD-Q5_K_M은 적재 검증 전이라 `config.env` 검사가 거부한다 |
+| `KG_CTX` / `KG_PARALLEL` / `EMBED_*` | 32768 / 4 / bge-m3·8081·GPU 2 | 아래 "지식그래프 스택" 절 |
 
-양자화 선택 (2026-09-17 결정): **기본은 Q6_K**, 백업은 Q4_K_M. 둘 다 반입한다.
-Q6_K는 GPU에 약 19.6 GiB(입력 임베딩 0.97 GiB는 RAM에 남는다)를 올리고, mmproj
-0.87 GiB와 63488 컨텍스트 KV 3.9 GiB를 더하면 연산 버퍼 전 약 24.5 GiB다 — 3장
-합계 안에는 들어가지만 장별로 들어가는지는 `GPU_TENSOR_SPLIT` 이 정한다. 토큰마다
-읽는 가중치가 Q4_K_M의 약 1.33배라 생성 속도는 20~25% 느릴 것으로 본다(추정 —
-아직 재지 않았다). 안 들어가거나 너무 느리면 순서대로:
-`LLAMA_KV_TYPE=q8_0` → `LLAMA_CTX=49152` → `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf`.
-Q4_K_M으로 바꿔도 alias·mmproj·템플릿은 그대로다. Q8_0(27.1 GiB)은 33GB에 안
+양자화 선택 (2026-09-22 변경): **기본은 UD-Q5_K_M**(Unsloth dynamic, 18.4 GiB, sha256
+`2de73110…` — HF 원본 LFS 해시와 스테이징 PC 재계산 일치), 백업은 Q6_K(20.9 GiB — LoRA
+적재가 검증된 유일한 기반)와 Q4_K_M(15.7 GiB). 셋 다 반입하고 매니페스트가 검사한다.
+UD-Q5_K_M + mmproj 0.87 GiB + 63488 KV 약 2.9 GiB(K q8_0)는 연산 버퍼 전 약 22 GiB로
+3장 합계 안에는 들어가지만 장별로 들어가는지는 `GPU_TENSOR_SPLIT` 이 정한다.
+지식그래프 번들 문서의 "Q6_K에서 62k 부근 OOM"은 출처(실측인지 계산인지)가 적혀 있지
+않다 — 이 PC에서 확인된 사실로 다루지 않는다. 안 들어가거나 너무 느리면 순서대로:
+`LLAMA_CTX=49152` → `LLAMA_UBATCH=128` → `MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf`.
+모델을 바꿔도 alias·mmproj·고정 템플릿은 그대로다. Q8_0(27.1 GiB)은 33GB에 안
 들어가 반입하지 않는다.
 
 ## 학습 확장 — 쓰면서 규칙과 스킬이 쌓이는 경로 (가중치 학습 없음)
@@ -581,6 +587,7 @@ C:\pi_agent\export-sessions.bat
 개발 트리의 `colab-lora\README.md` 에 있다(이 폴더는 반입 대상이 아니다). 요점:
 
 - `train.jsonl` 의 sha256이 `train.report.md` 값과 같아야 시작한다.
+- **2026-09-22부터 기본 모델은 UD-Q5_K_M이지만 어댑터는 Q6_K에서만 쓴다.** 어댑터를 켜려면 `MODEL_FILE=Qwen3.8-27B-Q6_K.gguf` 로 바꾼다 — UD-Q5_K_M은 내장 템플릿이 다르고 적재 검증 전이라 `config.env` 검사가 `LORA_FILE` 을 거부한다.
 - 학습 결과 어댑터는 Colab에서 번들과 같은 Q6_K·llama.cpp b11010에 올려 텐서 적재를 확인하고,
   개발 PC에서 GGUF로 바꿔 sha256을 적는다. 반입할 것은 `.gguf` 와 그 `.json`(sha256) 둘뿐이다.
 - 학습 대상 모듈에서 `linear_attn.out_proj` 는 빠져 있다 — 넣으면 GGUF 변환이 실패한다(2026-09-17 CPU 실측).
@@ -604,6 +611,73 @@ set "LORA_SCALE=1.0"
 콜론을 배율 구분자로 읽고, 괄호는 배치 블록을 깨뜨린다). `lora\` 폴더는
 무결성 검사 범위 밖이라 여기에 파일을 넣어도 `verify-bundle.bat` 이 빨간불을
 띄우지 않는다.
+
+## 지식그래프 스택 (LightRAG · graphify, 2026-09-22)
+
+`폐쇄망지식그래프` 번들을 이 번들에 합쳤다(`tasks/pi-agent-kg-align` 합의). 문서에서
+엔티티·관계를 뽑아 지식그래프를 만드는 LightRAG(WebUI 포함), 임베디드 그래프 DB Kuzu,
+NetworkX·rdflib, 코드/문서를 그래프로 바꾸는 graphify가 들어 있다. **모두 외부 네트워크
+없이 동작한다.** 무결성은 따로 두지 않고 `STAGING_MANIFEST.json` 하나로 검사한다.
+
+| 경로 | 내용 |
+|---|---|
+| `packages_win\kg\wheelhouse\` | 휠 276개(py3.12 win_amd64). numpy·boto3는 패키지 간 핀이 충돌해 두 버전씩 들어 있어서, 통계 스택(`packages_win\py312`, `.venv`)과 **섞지 않는다** |
+| `packages_win\kg\tiktoken\` | tiktoken 원본(cl100k_base, o200k_base) |
+| `models\bge-m3-FP16.gguf` | 임베딩 모델(1024차원, 다국어, 최대 8192토큰) |
+| `kg\lightrag.env` | LightRAG 설정 템플릿 |
+| `pi-skills\graphify\` | graphify 스킬의 폐쇄망판(아래) |
+| `home\kg\` | `install-kg.bat` 이 대상 PC에서 만드는 venv·토크나이저 캐시·작업 폴더(매니페스트 밖) |
+
+### 순서
+
+```
+C:\pi_agent\install-kg.bat            :: 최초 1회. home\kg\venv 생성, --no-index 설치, pip check, 토크나이저 캐시
+C:\pi_agent\start-llama.bat kg        :: 창 1 - LLM(kg 프로파일, 8080)
+C:\pi_agent\start-embedding.bat       :: 창 2 - 임베딩(8081, GPU 2)
+C:\pi_agent\start-lightrag.bat        :: 창 3 - LightRAG, WebUI http://127.0.0.1:9621
+```
+
+문서는 `home\kg\work\inputs` 에 넣고 WebUI에서 인덱싱한다. 결과는 `home\kg\work\rag_storage\`
+(`graph_chunk_entity_relation.graphml` 은 Gephi·yEd로 연다). 이 폴더를 주기적으로 백업한다.
+
+**kg 프로파일과 Pi는 동시에 쓰지 않는다.** 둘 다 `LLAMA_PORT` 를 쓴다. `start-llama.bat kg` 는
+32768을 4슬롯이 나눠(슬롯당 8192) 청크 추출을 병렬로 돌리는데, Pi의 첫 요청만 약 13k 토큰이라
+그 슬롯에 들어가지 않는다. 그래서 `start-pi.bat` 이 서버의 `/props` 를 보고 슬롯이 1개가 아니거나
+창이 `LLAMA_CTX` 와 다르면 Pi를 띄우지 않는다(exit 11). Pi로 돌아가려면 kg 창을 닫고 인자 없이
+`start-llama.bat` 을 다시 띄운다. kg 프로파일은 비전 프로젝터를 올리지 않는다.
+
+`kg\lightrag.env` 는 요청 하나의 입력+출력이 슬롯(8192) 안에 들도록 상한을 둔다(추출 입력 4000,
+요약 입력 4000, 질의 전체 4000, 출력 2500). 라이브러리 기본값(`MAX_TOTAL_TOKENS` 30000 등)은 슬롯을
+넘는다. `start-lightrag.bat` 은 기동 직전에 **실제로 적용될 값**(보존된 `home\kg\work\.env` +
+같은 이름의 환경변수, 없는 키는 라이브러리 기본값)을 떠 있는 LLM 서버의 슬롯 크기(`/props`)와
+대조해 넘치면 띄우지 않는다(`tools\kg_budget.py`, exit 3). `.env` 를 고쳤다면 이 검사가 알려 준다.
+LightRAG가 부를 서버 주소와 모델 이름은 `config.env` 의 `LLAMA_PORT`·`EMBED_PORT`·`MODEL_ALIAS` 로
+bat이 넣는다 — `.env` 의 같은 키보다 우선한다. 추출은 사고를 끈다(`enable_thinking: false`).
+품질 영향은 아직 재지 않았다.
+
+임베딩 서버의 벡터 길이가 **1024** 인지 확인한다(`EMBEDDING_DIM` 과 같아야 인덱싱이 깨지지 않는다):
+
+```
+curl http://127.0.0.1:8081/v1/embeddings -H "Content-Type: application/json" -d "{\"model\":\"bge-m3\",\"input\":\"테스트\"}"
+```
+
+### graphify
+
+Pi 세션에서 `/skill:graphify <폴더>` 로 부른다(`start-pi.bat` 이 `--skill` 로 로드). 코드는
+tree-sitter AST로 로컬 파싱하므로 LLM을 쓰지 않는다. 문서·PDF·이미지의 의미 추출은 지금 도는
+Pi(로컬 llama-server)가 한다. 폐쇄망판에서는 GitHub clone, `pip`/`uv` 설치, Gemini API,
+Whisper 전사, `graphify add <url>`, Neo4j/FalkorDB push를 지웠다(`tools\sanitize_graphify_skill.py`).
+graphify는 PATH가 아니라 번들 venv(`home\kg\venv\Scripts\python.exe -m graphify`)로만 부른다 — 이 PC에
+다른 graphify가 있어도 섞이지 않는다. graphify가 만든 HTML(`graph.html` 등)은 그래프 라이브러리를
+CDN에서 받게 돼 있어서, 스킬이 `tools\graphify_offline_html.py` 로 번들의 고정 사본(vis-network 9.1.6,
+d3 7.9.0, mermaid 11.17.2 — `packages_win\kg\web\`)을 가리키게 바꾼다.
+**`GEMINI_API_KEY`·`GOOGLE_API_KEY` 는 설정하지 않는다** — 설정하면 graphify가 외부 API를 부른다.
+
+### 확인할 것
+
+- `netstat -ano | findstr "8080 8081 9621"` 로 전부 `127.0.0.1` 에만 바인딩됐는지
+- 방화벽 아웃바운드 차단 상태에서 설치·인덱싱이 끝나는지(외부 호출이 없는지)
+- `nvidia-smi -l 5` 로 GPU 2의 LLM 몫 + 임베딩 몫이 11GB를 넘지 않는지
 
 ## 하지 않는 것
 - `pi install` 로 패키지나 확장을 새로 설치하지 않는다. npm이 필요하고

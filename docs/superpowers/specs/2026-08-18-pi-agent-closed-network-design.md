@@ -601,3 +601,24 @@ VRAM 산술(63488, KV f16): 층 18.61 + 출력 0.97 + KV 3.875(§14.3) + 선형 
 
 **최적화 재점검 — 요청 기본 크기(실측).** 운영 구성(확장 4종 + learning + 기본 도구) 첫 요청: 시스템 11.1k자 + superpowers 부트스트랩 4.3k자 + 도구 10개 약 30.2k자 ≈ 45.6k자(약 13k 토큰, chars/3.5). `pi-subagents`의 `subagent` 18.4k자·`bg_wait` 4.5k자·`subagent_supervisor` 0.5k자가 약 51%다. `toolDescriptionMode: compact`는 221자만 줄였다(파라미터 스키마는 모드와 무관). 기능을 빼지 않는 조치로 `tools\pi_settings.py`가 `home\agent\extensions\subagent\config.json`에 `asyncByDefault: false`(없을 때만)를 넣는다 — `--parallel 1` 서버에서 백그라운드 자식이 부모와 한 슬롯을 번갈아 쓰며 KV를 밀어내는 것을 막는다. `pi-subagents`를 뺄지(약 6.7k 토큰 절감 대 서브에이전트·일부 superpowers 스킬 상실)는 사용자 결정으로 남겼다.
 
+### 14.8 지식그래프 번들 정렬 (2026-09-22)
+
+사용자 지시: `폐쇄망지식그래프` 폴더(휠 276개·tiktoken·UD-Q5_K_M·bge-m3·graphify 스킬·LightRAG 설정·기동 스크립트)의 상태로 번들 전체를 맞춘다. pane(codex·agy) 3라운드 합의 + TypeSafe(FA 기본값) + 코드 리뷰 2라운드. 근거와 이견: 개발 트리 `tasks/pi-agent-kg-align/artifacts/consensus.md`.
+
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| 기본 모델 | `Qwen3.8-27B-UD-Q5_K_M.gguf`, Q6_K·Q4_K_M은 매니페스트 안 백업 | sha256 `2de73110…` 스테이징 재계산 = HF LFS. §14.6의 Q6_K 기본을 대체 |
+| flash attention | 키 `LLAMA_FLASH_ATTN`(auto\|off), 기본 auto | b11010 `fattn.cu` 552-560행: 비텐서코어 GPU도 head 256을 tile/vec로 지원. KG 문서의 "FA 불가"는 b11010에 없는 오류 문구를 인용 — 구버전 기준. off@63488×1은 어느 쪽도 근거 없음. TypeSafe: off_both 0.00 / auto_both 0.51 / auto_pi_off_kg 0.49 |
+| KV | `-ctk %LLAMA_KV_TYPE%`(기본 q8_0), `-ctv f16` 고정 | 양자화 V는 FA 전제. K q8_0은 FA 없이 동작 |
+| 배치·적재 | `-b 1024`, `-ub` 기본 256(≤1024), `--no-mmap`, `GPU_TENSOR_SPLIT` 초기값 10,11,8 | KG 가이드 값. ub 256은 vocab 248,320 logits 버퍼 |
+| 템플릿 | `--chat-template-file chat-templates\qwen38-c3cf9e34.jinja` | UD-Q5_K_M 내장 템플릿은 Unsloth 변형(sha `12827f24…`: 시스템 병합, 문자열 도구 인자 예외). 도구 왕복·렌더 일치·LoRA 데이터는 원본 `c3cf9e34` 기준 |
+| 프로파일 | `start-llama.bat kg`: `KG_CTX`(32768)/`KG_PARALLEL`(4), mmproj 없음. 슬롯 8192 미만 거부 | 같은 포트라 전환은 재시작. `start-pi.bat`이 `/props`(b11010 `server-context.cpp` 4598-4630행)로 슬롯 1개·창 = LLAMA_CTX·템플릿 일치를 확인하고 아니면 exit 11 |
+| KG 스택 | `packages_win\kg\wheelhouse`(격리 venv `home\kg\venv`), `install-kg.bat`(--no-index, pip check, nonzero), `start-embedding.bat`(bge-m3, GPU 2, 8081, pooling cls), `start-lightrag.bat`, `kg\lightrag.env` | 휠의 numpy·boto3 이중 버전 때문에 통계 스택과 분리. LightRAG는 `.env`를 override=False로 읽어 bat이 넣은 포트·모델명이 이긴다 |
+| LightRAG 예산 | 요청마다 입력+출력 ≤ 슬롯의 85% | 기본값(MAX_TOTAL_TOKENS 30000 등)은 슬롯 초과. 1.5.7의 `MAX_EXTRACT_INPUT_TOKENS`는 gleaning에만 적용, 첫 추출은 시스템 약 1,550 + 청크(Qwen 토큰 실측). `start-lightrag.bat`이 적용될 `.env`+환경변수를 서버 슬롯(`/props`)과 대조(`tools/kg_budget.py`) |
+| graphify | `pi-skills\graphify`(`tools/sanitize_graphify_skill.py`로 GitHub·pip/uv·Gemini·Whisper·URL 수집·DB push 제거), `--skill` 로드, 모든 호출은 번들 venv `python -m graphify`, HTML은 `tools/graphify_offline_html.py`로 vis-network 9.1.6·d3 7.9.0·mermaid 11.17.2 로컬 사본 참조 | graphify 0.9.65 HTML은 CDN을 부른다(`exporters/html.py` 621행 등) |
+| LoRA | `LORA_FILE`은 Q6_K에서만 허용(`config_parse.LORA_VERIFIED_BASES`) | Q5 템플릿이 다르고 어댑터 적재 미검증 |
+| 무결성 | STAGING_MANIFEST 하나. 원본 `폐쇄망지식그래프/`는 EXCLUDED_ROOTS·gitignore | 같은 20GB를 두 번 싣지 않는다 |
+
+반입하지 않은 원본 항목: `lightrag_demo.py`(alias·`.env`·예산 검사·출력 상한 우회), 안내 문서 00~02(README-폐쇄망이 대체, 02는 뒤집힌 FA 주장 포함), `06_docs`(상류 README의 pip/uv/Gemini/URL 안내), `SHA256SUMS`·`verify_sha256.ps1`(매니페스트가 대체), `install_offline.ps1`(`install-kg.bat`이 대체). 남은 한계: `kg_budget`는 출력 상한을 `OPENAI_LLM_MAX_TOKENS`로만 본다.
+
+대상 PC 실측은 여전히 없다. 리허설 §11-2(off/auto A/B), §11-9(Q5 기본), §11-18~§11-22(KG 스택)가 확인 항목이다.

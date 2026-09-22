@@ -94,8 +94,12 @@ def test_flash_attention_is_left_to_the_device_probe():
     # b11010 ggml-cuda/fattn.cu: 텐서코어가 없는 Pascal은 tile/vec 커널을 쓰므로
     # auto는 enabled로 풀린다. on은 src/llama-context.cpp의 장치 probe를 건너뛰어
     # 지원이 안 되면 연산이 CPU로 간다 - auto는 그때 disabled + 경고 로그를 남긴다.
-    command = _server_command(read("start-llama.bat"))
-    assert "-fa auto" in command
+    # 2026-09-22 KG 정렬: 값은 LLAMA_FLASH_ATTN(auto|off, 기본 auto)에서 온다. on은
+    # config_parse가 받지 않는다(tests/test_kg_stack.py).
+    body = read("start-llama.bat")
+    command = _server_command(body)
+    assert "-fa %LLAMA_FLASH_ATTN%" in command
+    assert 'if not defined LLAMA_FLASH_ATTN set "LLAMA_FLASH_ATTN=auto"' in body
     assert "-fa on" not in command
 
 
@@ -105,10 +109,11 @@ def test_fit_is_off_because_the_script_owns_layers_and_split():
     assert "-ngl 999" in command and "-fit off" in command
 
 
-def test_kv_cache_type_is_configurable_with_an_f16_default():
+def test_kv_cache_type_sets_the_k_cache_with_a_q8_0_default():
+    # 2026-09-22 KG 정렬: 양자화 V 캐시는 FA를 전제로 하므로 V는 f16 고정, 키는 K만 정한다.
     body = read("start-llama.bat")
-    assert 'if not defined LLAMA_KV_TYPE set "LLAMA_KV_TYPE=f16"' in body
-    assert "-ctk %LLAMA_KV_TYPE% -ctv %LLAMA_KV_TYPE%" in _server_command(body)
+    assert 'if not defined LLAMA_KV_TYPE set "LLAMA_KV_TYPE=q8_0"' in body
+    assert "-ctk %LLAMA_KV_TYPE% -ctv f16" in _server_command(body)
 
 
 def test_prompt_cache_ram_is_passed_only_when_configured():
@@ -143,9 +148,11 @@ def test_lora_scale_defaults_to_one_and_a_missing_adapter_stops_startup():
 
 def test_start_llama_arguments_still_include_the_original_contract():
     command = _server_command(read("start-llama.bat"))
-    for required in ("--jinja", "--host 127.0.0.1", "-ngl 999", "--parallel 1", "-sm layer",
+    for required in ("--jinja", "--host 127.0.0.1", "-ngl 999", "--parallel %PARALLEL%", "-sm layer",
                      "%TS_ARG%", "%MMPROJ_ARG%"):
         assert required in command, required
+    # Pi 프로파일(인자 없음)은 여전히 슬롯 1개다. kg 프로파일만 KG_PARALLEL을 쓴다.
+    assert 'set "PARALLEL=1"' in read("start-llama.bat")
 
 
 # --- config.env 검증 ------------------------------------------------------------
@@ -338,26 +345,25 @@ def test_the_suggestion_for_a_tiny_context_never_offers_zero():
 
 
 
-# --- LLAMA_UBATCH: 현장 대응용 선택 키 --------------------------------------------
-# agy 리뷰는 -ub 512가 WDDM TDR(2초)을 넘긴다고 봤지만 근거가 ubatch 전체 시간과
-# 커널 단위 시간을 섞은 것이라 기본값은 바꾸지 않는다. 다만 폐쇄망에서 TDR 증상이
-# 나오면 해시 대상인 .bat을 고칠 수 없으므로 config.env로 낮출 길만 열어 둔다.
+# --- LLAMA_UBATCH -----------------------------------------------------------------
+# 2026-09-17에는 현장 대응용 선택 키(비우면 512)였다. 2026-09-22 KG 정렬로 기본 256이
+# 됐다(vocab 248,320의 logits 버퍼 - 폐쇄망지식그래프 02 가이드). TDR이 나오면 128로.
 
 
-def test_ubatch_is_passed_only_when_configured():
+def test_ubatch_defaults_to_256_and_is_always_passed():
     body = read("start-llama.bat")
-    assert 'if defined LLAMA_UBATCH set "UBATCH_ARG=-ub %LLAMA_UBATCH%"' in body
-    assert "%UBATCH_ARG%" in _server_command(body)
-    assert "-ub " not in _server_command(body).replace("%UBATCH_ARG%", "")
+    assert 'if not defined LLAMA_UBATCH set "LLAMA_UBATCH=256"' in body
+    assert "-ub %LLAMA_UBATCH%" in _server_command(body)
+    assert "-b 1024" in _server_command(body)
 
 
-@pytest.mark.parametrize("value,ok", [("256", True), ("128", True), ("512", True), ("0", False), ("300", False), ("4096", False)])
-def test_ubatch_takes_powers_of_two_up_to_2048(value, ok):
+@pytest.mark.parametrize("value,ok", [("256", True), ("128", True), ("512", True), ("1024", True), ("0", False), ("300", False), ("2048", False), ("4096", False)])
+def test_ubatch_takes_powers_of_two_up_to_the_logical_batch(value, ok):
     _, problems = config_parse.parse_text(f'set "LLAMA_UBATCH={value}"\n')
     assert (problems == []) is ok, (value, problems)
 
 
-def test_config_example_leaves_ubatch_blank():
+def test_config_example_sets_ubatch_256():
     values, problems = config_parse.parse_text(read("config.env.example"))
     assert problems == []
-    assert values["LLAMA_UBATCH"] == ""
+    assert values["LLAMA_UBATCH"] == "256"

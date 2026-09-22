@@ -14,6 +14,17 @@ call :resolve_bootstrap_python
 if errorlevel 1 exit /b 4
 call :load_config
 if errorlevel 1 exit /b 6
+rem Profile. No argument = the Pi coding-agent server (one slot, LLAMA_CTX).
+rem "kg" = the knowledge-graph extraction server for LightRAG: KG_PARALLEL slots
+rem sharing KG_CTX (default 32768 / 4 = 8192 per slot, closed-network KG bundle, 02 guide).
+rem Both use port LLAMA_PORT, so switching means stopping one and starting the
+rem other; start-pi.bat refuses to attach to a kg server (tools\server_profile.py).
+set "PROFILE=pi"
+if /I "%~1"=="kg" set "PROFILE=kg"
+if not "%~1"=="" if /I not "%~1"=="kg" (
+  echo [FAIL] unknown profile "%~1" - use no argument for Pi, or kg for LightRAG extraction
+  exit /b 2
+)
 
 if not defined LLAMA_BACKEND set "LLAMA_BACKEND=cuda"
 if not defined LLAMA_PORT set "LLAMA_PORT=8080"
@@ -33,12 +44,12 @@ if /I "%LLAMA_BACKEND%"=="vulkan" (
   echo        diagnostic only - see ALLOW_CPU_DIAGNOSTIC in config.env.
   exit /b 8
 )
-rem cpu means loading a 22.4GB (Q6_K) model into system RAM. On a machine short of RAM
+rem cpu means loading a ~20GB (UD-Q5_K_M) model into system RAM. On a machine short of RAM
 rem or pagefile that thrashes for a long time instead of failing, so it must be
 rem chosen on purpose, never by accident.
 if /I "%LLAMA_BACKEND%"=="cpu" if not "%ALLOW_CPU_DIAGNOSTIC%"=="1" (
   echo [FAIL] LLAMA_BACKEND=cpu needs an explicit opt-in.
-  echo        This loads a 22.4GB Q6_K model into system RAM. A 27B dense model does
+  echo        This loads a ~20GB model into system RAM. A 27B dense model does
   echo        not reach usable speed on CPU - this backend is for narrowing down
   echo        a problem, not for production.
   echo        Set ALLOW_CPU_DIAGNOSTIC=1 in config.env if that is what you want.
@@ -73,19 +84,45 @@ if defined GPU_TENSOR_SPLIT set "TS_ARG=-ts %GPU_TENSOR_SPLIT%"
 
 set "MMPROJ_ARG="
 if defined MMPROJ_FILE set MMPROJ_ARG=--mmproj "%ROOT%models\%MMPROJ_FILE%"
+rem Chat template. The bundle pins the original Qwen3.8 template (sha256
+rem c3cf9e34..., the one embedded in the Q6_K GGUF and used by every tool
+rem round-trip, render parity and LoRA data check). The UD-Q5_K_M GGUF embeds an
+rem Unsloth variant that merges system messages and raises on string tool-call
+rem arguments. Clearing CHAT_TEMPLATE_FILE falls back to the embedded template.
+set "TEMPLATE_ARG="
+if defined CHAT_TEMPLATE_FILE if not exist "%ROOT%chat-templates\%CHAT_TEMPLATE_FILE%" (
+  echo [FAIL] "%ROOT%chat-templates\%CHAT_TEMPLATE_FILE%" not found
+  echo        Clear CHAT_TEMPLATE_FILE in config.env to use the template embedded in the model.
+  exit /b 2
+)
+if defined CHAT_TEMPLATE_FILE set TEMPLATE_ARG=--chat-template-file "%ROOT%chat-templates\%CHAT_TEMPLATE_FILE%"
+set "CTX=%LLAMA_CTX%"
+set "PARALLEL=1"
+if not defined KG_CTX set "KG_CTX=32768"
+if not defined KG_PARALLEL set "KG_PARALLEL=4"
+if "%PROFILE%"=="kg" set "CTX=%KG_CTX%"
+if "%PROFILE%"=="kg" set "PARALLEL=%KG_PARALLEL%"
+rem Extraction sends text only, and the vision projector costs VRAM on the card
+rem that also hosts the embedding server, so the kg profile leaves it out.
+if "%PROFILE%"=="kg" set "MMPROJ_ARG="
 
-rem Tuning for 3x GTX 1080 Ti and 128GB RAM, 2026-09-17. Evidence for each line
-rem is llama.cpp b11010 source; see config.env.example for the operator view.
-rem Flash attention is left on auto, on purpose. ggml-cuda/fattn.cu picks the
-rem tile/vec kernels on GPUs without tensor cores, so auto resolves to enabled on
-rem Pascal. auto probes the device first (src/llama-context.cpp) and logs
-rem "flash_attn not supported, set to disabled" if it cannot run there; forcing
-rem on skips that probe and lets the op land on the CPU instead. A quantized KV
-rem cache turns auto into enabled by itself.
+rem Tuning for 3x GTX 1080 Ti and 128GB RAM, 2026-09-17, aligned with the
+rem closed-network KG bundle on 2026-09-22 (tasks\pi-agent-kg-align consensus).
+rem Evidence for each line is llama.cpp b11010 source; see config.env.example.
+rem Flash attention comes from LLAMA_FLASH_ATTN, auto by default. ggml-cuda/fattn.cu
+rem picks the tile/vec kernels on GPUs without tensor cores, head size 256
+rem included, so auto can resolve to enabled on Pascal. auto probes the device
+rem first (src/llama-context.cpp) and logs "flash_attn not supported, set to
+rem disabled" if it cannot run there; forcing on skips that probe and lets the
+rem op land on the CPU instead, so on is not offered. off is what the
+rem KG bundle guide sets; rehearsal 11-2 compares off and auto.
 rem -fit off: this script owns -ngl, -ts and -c. With -ngl set, --fit (default
 rem on) gives up every start and prints an abort line operators read as a
 rem failure (common/fit.cpp "n_gpu_layers already set by user").
-if not defined LLAMA_KV_TYPE set "LLAMA_KV_TYPE=f16"
+if not defined LLAMA_FLASH_ATTN set "LLAMA_FLASH_ATTN=auto"
+rem LLAMA_KV_TYPE is the K cache type only. A quantized V cache needs flash
+rem attention, which is off or may resolve to off here, so V stays f16.
+if not defined LLAMA_KV_TYPE set "LLAMA_KV_TYPE=q8_0"
 
 rem Host-RAM prompt cache. With a single slot, switching between a session and
 rem a subagent evicts the KV state; the RAM cache lets it come back without a
@@ -100,11 +137,12 @@ rem checkpoints, so the gain on Pascal is unmeasured.
 set "SPEC_ARG="
 if "%LLAMA_SPEC_MTP%"=="1" set "SPEC_ARG=--spec-type draft-mtp"
 
-rem Physical batch size. Blank keeps the llama.cpp default (512). Lower it only
-rem if long prompts trigger a Windows "display driver stopped responding" (TDR)
-rem reset on these cards - a field fallback that needs no edit to this hashed file.
-set "UBATCH_ARG="
-if defined LLAMA_UBATCH set "UBATCH_ARG=-ub %LLAMA_UBATCH%"
+rem Physical batch size, 256 by default. The vocabulary has 248,320 entries, so
+rem the logits buffer at the llama.cpp default of 512 is large; 256 is what the
+rem KG bundle guide sets. Lower it to 128 if long prompts trigger a Windows
+rem "display driver stopped responding" (TDR) reset. The logical batch is fixed
+rem at 1024 and config_parse refuses a larger ubatch.
+if not defined LLAMA_UBATCH set "LLAMA_UBATCH=256"
 
 rem LoRA adapter trained on the target PC. Clearing LORA_FILE is the rollback.
 rem --lora-scaled splits FNAME:SCALE on every colon, so an absolute H:\ path
@@ -119,8 +157,9 @@ if defined LORA_FILE if not exist "%ROOT%lora\%LORA_FILE%" (
 )
 if defined LORA_FILE set LORA_ARG=--lora-scaled "lora\%LORA_FILE%:%LORA_SCALE%"
 
-echo [info] starting %MODEL_FILE% as %MODEL_ALIAS% on the %LLAMA_BACKEND% backend
-echo [info] ctx %LLAMA_CTX%, kv cache %LLAMA_KV_TYPE%, flash attention auto
+echo [info] starting %MODEL_FILE% as %MODEL_ALIAS% on the %LLAMA_BACKEND% backend, profile %PROFILE%
+echo [info] ctx %CTX% over %PARALLEL% slot(s), k cache %LLAMA_KV_TYPE%, v cache f16, flash attention %LLAMA_FLASH_ATTN%, ubatch %LLAMA_UBATCH%
+if defined CHAT_TEMPLATE_FILE echo [info] chat template chat-templates\%CHAT_TEMPLATE_FILE%
 if defined LORA_FILE echo [info] LoRA adapter lora\%LORA_FILE% at scale %LORA_SCALE%
 "%LLAMA_DIR%\llama-server.exe" ^
   -m "%ROOT%models\%MODEL_FILE%" ^
@@ -129,10 +168,10 @@ if defined LORA_FILE echo [info] LoRA adapter lora\%LORA_FILE% at scale %LORA_SC
   --host 127.0.0.1 ^
   --port %LLAMA_PORT% ^
   -ngl 999 ^
-  -c %LLAMA_CTX% ^
-  --parallel 1 ^
+  -c %CTX% ^
+  --parallel %PARALLEL% ^
   -sm layer %TS_ARG% %MMPROJ_ARG% ^
-  -fa auto -fit off -ctk %LLAMA_KV_TYPE% -ctv %LLAMA_KV_TYPE% %CACHE_RAM_ARG% %UBATCH_ARG% %SPEC_ARG% %LORA_ARG%
+  -fa %LLAMA_FLASH_ATTN% -fit off -ctk %LLAMA_KV_TYPE% -ctv f16 -b 1024 -ub %LLAMA_UBATCH% --no-mmap %TEMPLATE_ARG% %CACHE_RAM_ARG% %SPEC_ARG% %LORA_ARG%
 exit /b %errorlevel%
 
 :load_config
