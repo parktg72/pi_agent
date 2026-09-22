@@ -73,10 +73,16 @@ def _inside(path: Path, base: Path) -> bool:
     return True
 
 
-def layout_problems(slot: Path) -> list[str]:
-    """슬롯 구조 자체의 문제: 링크·junction, data가 폴더가 아님, 슬롯 루트에 잘못 둔 파일(codex R4·R5)."""
+def layout_problems(root: Path, slot: Path) -> list[str]:
+    """슬롯 구조 자체의 문제: 링크·junction, data가 폴더가 아님, 슬롯 루트에 잘못 둔 파일(codex R4~R6).
+
+    기준은 신뢰된 번들 루트(root)다. terminology\\ 자체가 링크여도 슬롯과 그 부모를 둘 다 바깥으로
+    풀면 "안에 있다"로 보이므로, terminology\\부터 root 기준으로 확인한다.
+    """
     problems: list[str] = []
-    top = slot.parent
+    top = root / "terminology"
+    if _is_link(top) or (top.exists() and not _inside(top, root)):
+        return ["terminology 폴더가 링크·junction이다 - 번들 밖을 가리킬 수 있어 받지 않는다"]
     if _is_link(slot) or (slot.exists() and not _inside(slot, top)):
         return ["슬롯 폴더가 링크·junction이다 - 번들 밖을 가리킬 수 있어 받지 않는다"]
     data = slot / "data"
@@ -121,7 +127,7 @@ def load_slot_json(slot: Path) -> tuple[dict | None, str | None]:
 
 def check_slot(root: Path, source: str) -> tuple[str, list[str]]:
     slot = root / "terminology" / source
-    problems: list[str] = layout_problems(slot)
+    problems: list[str] = layout_problems(root, slot)
     present = data_files(slot)
     document, error = load_slot_json(slot)
     if error:
@@ -182,7 +188,7 @@ def check_slot(root: Path, source: str) -> tuple[str, list[str]]:
 def record(root: Path, source: str) -> tuple[bool, str]:
     """data/의 파일을 해시해 files[]를 쓴다. 목록·크기·해시가 바뀌면 검토를 unreviewed로 되돌린다."""
     slot = root / "terminology" / source
-    layout = layout_problems(slot)
+    layout = layout_problems(root, slot)
     if layout:
         return False, "; ".join(layout)
     present = data_files(slot)
@@ -207,8 +213,8 @@ def record(root: Path, source: str) -> tuple[bool, str]:
         reset = True
     target = slot / "slot.json"
     # 쓰기 직전에 다시 확인한다: 검사 뒤 링크로 바뀌었어도 슬롯 밖을 덮어쓰지 않는다.
-    if _is_link(target) or (target.exists() and not _inside(target, slot)):
-        return False, "slot.json이 링크·junction이다 - 쓰지 않았다"
+    if _is_link(target) or (target.exists() and not _inside(target, slot)) or not _inside(slot, root / "terminology"):
+        return False, "slot.json이 링크·junction이거나 번들 밖이다 - 쓰지 않았다"
     target.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     note = " - 파일이 바뀌어 review_status를 unreviewed로 되돌렸다. 재검토 후 approved로 쓴다" if reset else ""
     return True, f"terminology/{source}/slot.json에 파일 {len(files)}개를 기록했다{note}"

@@ -335,3 +335,16 @@ def test_junctions_count_as_links(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "is_junction", lambda self: self == target, raising=False)
     status, problems = ts.check_slot(tmp_path, "umls")
     assert status == "incomplete" and any("junction" in p for p in problems)
+
+
+def test_a_symlinked_terminology_root_is_refused_and_never_written_through(tmp_path):
+    outside = tmp_path / "outside"
+    shutil.copytree(ROOT / "terminology", outside / "terminology")
+    (outside / "terminology" / "umls" / "data").mkdir()
+    (outside / "terminology" / "umls" / "data" / "a.csv").write_bytes(b"1")
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "terminology").symlink_to(outside / "terminology", target_is_directory=True)
+    assert ts.check_slot(bundle, "umls")[0] == "incomplete"
+    assert ts.record(bundle, "umls")[0] is False
+    assert not (outside / "terminology" / "umls" / "slot.json").exists()
