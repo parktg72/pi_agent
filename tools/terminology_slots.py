@@ -49,11 +49,40 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+SLOT_ENTRIES = ("README.md", "slot.example.json", "slot.json", "data")
+
+
 def data_files(slot: Path) -> list[str]:
     data = slot / "data"
     if not data.is_dir():
         return []
-    return sorted(p.relative_to(data).as_posix() for p in data.rglob("*") if p.is_file())
+    return sorted(p.relative_to(data).as_posix() for p in data.rglob("*") if p.is_file() or p.is_symlink())
+
+
+def layout_problems(slot: Path) -> list[str]:
+    """슬롯 구조 자체의 문제: data가 폴더가 아님, 링크, 슬롯 루트에 잘못 둔 파일(codex R4 #1·#2·#3)."""
+    problems: list[str] = []
+    data = slot / "data"
+    if data.exists() and not data.is_dir():
+        problems.append("data가 폴더가 아니다 - 덤프는 data\\ 폴더 안에 둔다")
+    if data.is_symlink():
+        problems.append("data가 링크다 - 슬롯 밖을 가리킬 수 있어 받지 않는다")
+    elif data.is_dir():
+        for path in data.rglob("*"):
+            if path.is_symlink():
+                problems.append(f"data/{path.relative_to(data).as_posix()}가 링크다 - 실제 파일만 둔다")
+    if slot.is_dir():
+        for entry in sorted(slot.iterdir()):
+            if entry.name not in SLOT_ENTRIES:
+                problems.append(f"슬롯 루트의 {entry.name}은 모르는 항목이다 - 덤프는 data\\에, 기록은 slot.json에만 둔다")
+    return problems
+
+
+def _valid_relative(name: str) -> bool:
+    if not name or name.startswith(("/", "\\")) or "\\" in name or ":" in name:
+        return False
+    parts = name.split("/")
+    return all(part not in ("", ".", "..") for part in parts)
 
 
 def load_slot_json(slot: Path) -> tuple[dict | None, str | None]:
@@ -71,15 +100,17 @@ def load_slot_json(slot: Path) -> tuple[dict | None, str | None]:
 
 def check_slot(root: Path, source: str) -> tuple[str, list[str]]:
     slot = root / "terminology" / source
-    problems: list[str] = []
+    problems: list[str] = layout_problems(slot)
     present = data_files(slot)
     document, error = load_slot_json(slot)
     if error:
-        return "incomplete", [error]
+        return "incomplete", problems + [error]
     recorded = document.get("files") if document else None
     if recorded is not None and not isinstance(recorded, list):
         return "incomplete", ["files가 목록이 아니다"]
     recorded = recorded or []
+    if problems:
+        return "incomplete", problems
     if not present and not recorded:
         return "empty", []
 
@@ -102,7 +133,14 @@ def check_slot(root: Path, source: str) -> tuple[str, list[str]]:
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
             problems.append(f"files 항목 형식이 잘못됐다: {entry!r}")
             continue
-        listed[entry["path"]] = entry
+        name = entry["path"]
+        if not _valid_relative(name):
+            problems.append(f"files 경로 {name!r}는 data/ 안의 상대경로가 아니다(절대경로·..·역슬래시 불가)")
+            continue
+        if name in listed:
+            problems.append(f"files에 {name}이 두 번 있다")
+            continue
+        listed[name] = entry
     for name in present:
         if name not in listed:
             problems.append(f"data/{name}이 files[]에 없다 - record를 다시 실행하고 재검토하라")
@@ -123,6 +161,9 @@ def check_slot(root: Path, source: str) -> tuple[str, list[str]]:
 def record(root: Path, source: str) -> tuple[bool, str]:
     """data/의 파일을 해시해 files[]를 쓴다. 목록·크기·해시가 바뀌면 검토를 unreviewed로 되돌린다."""
     slot = root / "terminology" / source
+    layout = layout_problems(slot)
+    if layout:
+        return False, "; ".join(layout)
     present = data_files(slot)
     if not present:
         return False, f"terminology/{source}/data/에 파일이 없다"
@@ -163,6 +204,12 @@ def main(argv: list[str]) -> int:
         return 0 if ok else 1
 
     failed = False
+    top = args.root / "terminology"
+    if top.is_dir():
+        for entry in sorted(top.iterdir()):
+            if entry.name != "README.md" and entry.name not in SOURCES:
+                print(f"[incomplete] terminology/{entry.name} - 모르는 항목이다(슬롯은 {', '.join(SOURCES)})")
+                failed = True
     for source in SOURCES:
         status, problems = check_slot(args.root, source)
         print(f"[{status}] terminology/{source}")

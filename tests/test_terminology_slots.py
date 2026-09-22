@@ -57,7 +57,8 @@ def test_each_slot_has_a_readme_and_an_unreviewed_template(source):
 
 def test_dumps_and_filled_records_are_ignored_by_git():
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    assert "/terminology/*/data/" in ignore and "/terminology/*/slot.json" in ignore
+    # 허용 목록: 슬롯 안은 README.md·slot.example.json만 추적(codex R4 #1).
+    assert "/terminology/*/*" in ignore and "!/terminology/*/README.md" in ignore and "!/terminology/*/slot.example.json" in ignore
     out = subprocess.run(
         ["git", "check-ignore", "terminology/umls/data/MRCONSO.RRF", "terminology/omop/slot.json", "terminology/umls/README.md"],
         cwd=ROOT, capture_output=True, text=True,
@@ -218,3 +219,82 @@ def test_check_terminology_bat_uses_goto_so_exit_codes_are_real():
     for block in text.split("(")[1:]:
         assert "%errorlevel%" not in block.split(")")[0]
     assert "/check-terminology.bat" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+
+# --- codex R4 반영 ------------------------------------------------------------------
+
+
+def test_only_slot_docs_are_tracked_so_strays_cannot_leak_to_git():
+    out = subprocess.run(
+        ["git", "check-ignore", "terminology/umls/slot.json.bak", "terminology/umls/MRCONSO.RRF", "terminology/stray.txt",
+         "terminology/README.md", "terminology/umls/README.md", "terminology/umls/slot.example.json"],
+        cwd=ROOT, capture_output=True, text=True,
+    ).stdout.split()
+    assert {"terminology/umls/slot.json.bak", "terminology/umls/MRCONSO.RRF", "terminology/stray.txt"} <= set(out)
+    assert not {"terminology/README.md", "terminology/umls/README.md", "terminology/umls/slot.example.json"} & set(out)
+
+
+def test_manifest_never_hashes_stray_files_in_a_slot(tmp_path):
+    slot = slot_tree(tmp_path)
+    (slot / "MRCONSO.RRF").write_bytes(b"x")
+    (slot / "slot.json.bak").write_text("{}", encoding="utf-8")
+    (slot / "extra").mkdir()
+    (slot / "extra" / "y.csv").write_bytes(b"y")
+    listed = {relative for relative, _ in manifest.iter_immutable_files(tmp_path)}
+    assert {p for p in listed if p.startswith("terminology/umls/")} == {
+        "terminology/umls/README.md", "terminology/umls/slot.example.json"}
+
+
+def test_stray_files_in_a_slot_make_it_incomplete(tmp_path):
+    slot = slot_tree(tmp_path)
+    (slot / "MRCONSO.RRF").write_bytes(b"x")
+    status, problems = ts.check_slot(tmp_path, "umls")
+    assert status == "incomplete" and any("MRCONSO.RRF" in p for p in problems)
+
+
+def test_a_data_file_instead_of_a_folder_is_not_empty(tmp_path):
+    slot = slot_tree(tmp_path)
+    (slot / "data").write_bytes(b"dump")
+    assert ts.check_slot(tmp_path, "umls")[0] == "incomplete"
+    assert ts.record(tmp_path, "umls")[0] is False
+
+
+@pytest.mark.parametrize("path", ["../outside.csv", "/etc/passwd", "C:x.csv", "a\\b.csv", "./a.csv"])
+def test_recorded_paths_must_stay_inside_data(tmp_path, path):
+    slot = slot_tree(tmp_path)
+    put(slot, "a.csv", b"1")
+    ts.record(tmp_path, "umls")
+    approve(slot)
+    doc = json.loads((slot / "slot.json").read_text(encoding="utf-8"))
+    doc["files"].append({"path": path, "bytes": 1, "sha256": "0" * 64})
+    (slot / "slot.json").write_text(json.dumps(doc), encoding="utf-8")
+    status, problems = ts.check_slot(tmp_path, "umls")
+    assert status == "incomplete" and any("상대경로" in p for p in problems)
+
+
+def test_duplicate_recorded_paths_are_refused(tmp_path):
+    slot = slot_tree(tmp_path)
+    put(slot, "a.csv", b"1")
+    ts.record(tmp_path, "umls")
+    approve(slot)
+    doc = json.loads((slot / "slot.json").read_text(encoding="utf-8"))
+    doc["files"].append(dict(doc["files"][0], sha256="f" * 64))
+    (slot / "slot.json").write_text(json.dumps(doc), encoding="utf-8")
+    status, problems = ts.check_slot(tmp_path, "umls")
+    assert status == "incomplete" and any("두 번" in p for p in problems)
+
+
+def test_symlinks_in_data_are_refused(tmp_path):
+    slot = slot_tree(tmp_path)
+    outside = tmp_path / "outside.csv"
+    outside.write_bytes(b"1")
+    (slot / "data").mkdir()
+    (slot / "data" / "link.csv").symlink_to(outside)
+    status, problems = ts.check_slot(tmp_path, "umls")
+    assert status == "incomplete" and any("링크" in p for p in problems)
+
+
+def test_unknown_entries_at_the_terminology_root_fail_the_check(tmp_path):
+    slot_tree(tmp_path)
+    (tmp_path / "terminology" / "snomed").mkdir()
+    assert ts.main(["--root", str(tmp_path), "check"]) == 1
