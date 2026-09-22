@@ -619,4 +619,6 @@ VRAM 산술(63488, KV f16): 층 18.61 + 출력 0.97 + KV 3.875(§14.3) + 선형 
 | LoRA | `LORA_FILE`은 Q6_K에서만 허용(`config_parse.LORA_VERIFIED_BASES`) | Q5 템플릿이 다르고 어댑터 적재 미검증 |
 | 무결성 | STAGING_MANIFEST 하나. 원본 `폐쇄망지식그래프/`는 EXCLUDED_ROOTS·gitignore | 같은 20GB를 두 번 싣지 않는다 |
 
+반입하지 않은 원본 항목: `lightrag_demo.py`(alias·`.env`·예산 검사·출력 상한 우회), 안내 문서 00~02(README-폐쇄망이 대체, 02는 뒤집힌 FA 주장 포함), `06_docs`(상류 README의 pip/uv/Gemini/URL 안내), `SHA256SUMS`·`verify_sha256.ps1`(매니페스트가 대체), `install_offline.ps1`(`install-kg.bat`이 대체). 남은 한계: `kg_budget`는 출력 상한을 `OPENAI_LLM_MAX_TOKENS`로만 본다.
+
 대상 PC 실측은 여전히 없다. 리허설 §11-2(off/auto A/B), §11-9(Q5 기본), §11-18~§11-22(KG 스택)가 확인 항목이다.
