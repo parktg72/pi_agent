@@ -1,6 +1,7 @@
 """의료 용어 체계 덤프 슬롯(terminology/<source>/)을 검사하고 파일 목록을 기록한다.
 
-슬롯: kcd8, icd10, atc, umls, omop (tasks/pi-agent-terminology 합의).
+슬롯: kcd8, icd10, atc, umls, omop (tasks/pi-agent-terminology 합의),
+mesh, doid, mondo, hira_ingredients, hira_atc_mapping (tasks/pi-agent-med-data 합의).
 - `terminology/<source>/data/`   덤프 원본. gitignore·매니페스트 제외 - 스테이징이든 현장이든 넣을 수 있다.
 - `terminology/<source>/slot.json` 출처·라이선스 검토·파일 목록. gitignore·매니페스트 제외.
 - `README.md`·`slot.example.json`만 git 추적·매니페스트 해시.
@@ -24,7 +25,7 @@ import json
 import sys
 from pathlib import Path
 
-SOURCES = ("kcd8", "icd10", "atc", "umls", "omop")
+SOURCES = ("kcd8", "icd10", "atc", "umls", "omop", "mesh", "doid", "mondo", "hira_ingredients", "hira_atc_mapping")
 REQUIRED_FIELDS = (
     "source",
     "distributor",

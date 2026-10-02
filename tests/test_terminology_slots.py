@@ -27,7 +27,9 @@ APPROVED = {
 
 
 def slot_tree(tmp_path: Path, source: str = "umls") -> Path:
-    shutil.copytree(ROOT / "terminology", tmp_path / "terminology")
+    # 추적되는 슬롯 문서만 복사한다. 스테이징 PC의 실제 원본(data/, 수백 MB)과 작성된 기록(slot.json)은
+    # 테스트 대상이 아니고, 복사하면 테스트마다 수백 MB를 옮긴다.
+    shutil.copytree(ROOT / "terminology", tmp_path / "terminology", ignore=shutil.ignore_patterns("data", "slot.json"))
     return tmp_path / "terminology" / source
 
 
@@ -339,7 +341,7 @@ def test_junctions_count_as_links(tmp_path, monkeypatch):
 
 def test_a_symlinked_terminology_root_is_refused_and_never_written_through(tmp_path):
     outside = tmp_path / "outside"
-    shutil.copytree(ROOT / "terminology", outside / "terminology")
+    shutil.copytree(ROOT / "terminology", outside / "terminology", ignore=shutil.ignore_patterns("data", "slot.json"))
     (outside / "terminology" / "umls" / "data").mkdir()
     (outside / "terminology" / "umls" / "data" / "a.csv").write_bytes(b"1")
     bundle = tmp_path / "bundle"
@@ -348,3 +350,54 @@ def test_a_symlinked_terminology_root_is_refused_and_never_written_through(tmp_p
     assert ts.check_slot(bundle, "umls")[0] == "incomplete"
     assert ts.record(bundle, "umls")[0] is False
     assert not (outside / "terminology" / "umls" / "slot.json").exists()
+
+
+
+# --- 2026-09-23 의학 자료 슬롯 (tasks/pi-agent-med-data 합의 B) -------------------------
+
+MED_SLOTS = ("mesh", "doid", "mondo", "hira_ingredients", "hira_atc_mapping")
+
+
+def test_the_new_medical_slots_are_registered_everywhere():
+    for source in MED_SLOTS:
+        assert source in ts.SOURCES and source in manifest.TERMINOLOGY_SOURCES
+        assert (ROOT / "terminology" / source / "README.md").is_file()
+    assert manifest.TERMINOLOGY_SOURCES == ts.SOURCES
+
+
+@pytest.mark.parametrize(
+    "source,needle",
+    [
+        ("mesh", "NLM"),
+        ("mondo", "CC BY 4.0"),
+        ("doid", "CC0"),
+        ("hira_ingredients", "공공누리 제1유형"),
+        ("hira_atc_mapping", "변경금지"),
+    ],
+)
+def test_each_medical_slot_readme_states_its_terms_and_attribution(source, needle):
+    assert needle in (ROOT / "terminology" / source / "README.md").read_text(encoding="utf-8")
+
+
+def test_hira_atc_mapping_is_kept_apart_from_the_whocc_atc_slot():
+    text = (ROOT / "terminology" / "hira_atc_mapping" / "README.md").read_text(encoding="utf-8")
+    assert "atc" in text and "섞지 않는다" in text
+
+
+def test_medical_raw_files_and_records_stay_out_of_git():
+    out = subprocess.run(
+        ["git", "check-ignore", "terminology/mesh/data/mesh2026.nt.gz", "terminology/mondo/slot.json",
+         "terminology/hira_atc_mapping/data/x.csv"],
+        cwd=ROOT, capture_output=True, text=True,
+    ).stdout.split()
+    assert len(out) == 3
+
+
+def test_an_unreviewed_medical_slot_is_incomplete_until_a_person_approves(tmp_path):
+    slot = slot_tree(tmp_path, "mondo")
+    put(slot, "mondo.owl", b"<rdf/>")
+    ts.record(tmp_path, "mondo")
+    status, problems = ts.check_slot(tmp_path, "mondo")
+    assert status == "incomplete" and any("unreviewed" in p for p in problems)
+    approve(slot)
+    assert ts.check_slot(tmp_path, "mondo") == ("recorded", [])

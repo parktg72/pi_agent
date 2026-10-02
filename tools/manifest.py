@@ -93,7 +93,7 @@ EXCLUDED_PATHS = (
 # (slot.json)은 스테이징에서 넣을 수도, 폐쇄망 현장에서 넣을 수도 있다. 해시하면 현장에서 넣는 순간
 # unexpected:가 뜨므로 빼고, 전송 무결성은 slot.json의 파일별 sha256으로 tools/terminology_slots.py가
 # 검사한다(tasks/pi-agent-terminology 합의 1·2). 슬롯 README.md·slot.example.json은 해시한다.
-TERMINOLOGY_SOURCES = ("kcd8", "icd10", "atc", "umls", "omop")
+TERMINOLOGY_SOURCES = ("kcd8", "icd10", "atc", "umls", "omop", "mesh", "doid", "mondo", "hira_ingredients", "hira_atc_mapping")
 FIELD_PATHS = tuple(
     path for source in TERMINOLOGY_SOURCES for path in (f"terminology/{source}/data", f"terminology/{source}/slot.json")
 )

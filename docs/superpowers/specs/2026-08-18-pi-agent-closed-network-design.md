@@ -635,3 +635,12 @@ VRAM 산술(63488, KV f16): 층 18.61 + 출력 0.97 + KV 3.875(§14.3) + 선형 
 | 무결성·검토 | `tools/terminology_slots.py`(`check-terminology.bat`): files[] bytes·sha256(1MB 스트리밍, 크기 먼저), 필수 출처·검토 필드, `review_status == approved`. 재기록으로 파일이 바뀌면 `unreviewed` | 자동 법률 판정·우회 플래그 없음 |
 | 범위 밖 | 파서·적재기·질의 CLI·Pi 스킬, SKOS 세부·소스 간 대응 | 실물·형식 명세 없이 만들면 인코딩·컬럼·규모(UMLS 수천만 행)를 추정하게 된다 |
 
+### 14.10 의학 도메인 지식 원본과 방향 재점검 (2026-09-23)
+
+pane(codex·agy) 2라운드. 근거: 개발 트리 `tasks/pi-agent-med-data/artifacts/consensus.md`.
+
+- 방향: ① 대상 PC 리허설 ② pi-subagents 가역 스위치 ③ 리허설 증거 수집·반출 검사 보조. 09-22의 "기능 동결"은 "Pi 코어 런타임 변경은 리허설 전 금지, 예외는 ②·③의 최소 변경·격리된 자료 슬롯·검사 도구·사용자 요청 원본"으로 고쳤다.
+- 원본 반입(변환 없음): MeSH 2026 RDF(NLM 약관, sha1 대조), DOID(CC0, 2026-08-31), MONDO(CC BY 4.0, 2026-09-01), 심평원 의약품주성분(공공누리 1유형, 20251031, 59,631행), 심평원 ATC코드 매핑(공공누리 3유형 변경금지, 20250630, 21,953행). 슬롯 `mesh`·`doid`·`mondo`·`hira_ingredients`·`hira_atc_mapping`. review_status는 unreviewed — 사용자 검토 전 check는 incomplete.
+- 보류: HPO(라이선스 원문 미확인), ICD-10-CM(WHO ICD-10·KCD와 혼선). 사용자 제공: KCD-8(통계분류포털 파일 링크 미확정), WHO ICD-10, WHOCC ATC/DDD, UMLS, OMOP.
+- 적재기는 아직 없다. MeSH(N-Triples)·DOID/MONDO(RDF/XML)는 pyoxigraph가 직접 읽는 형식이지만 적재 자원 사용량은 적재 작업 때 잰다.
+

@@ -675,7 +675,12 @@ d3 7.9.0, mermaid 11.17.2 — `packages_win\kg\web\`)을 가리키게 바꾼다.
 
 ### 의료 용어 체계 슬롯 (KCD-8 · ICD-10 · ATC · UMLS · OMOP, 2026-09-23)
 
-`terminology\{kcd8,icd10,atc,umls,omop}\` 는 용어 체계 덤프를 넣을 **자리**다. **지금은 어느 슬롯에도 데이터가 없다.**
+`terminology\{kcd8,icd10,atc,umls,omop}\` 는 라이선스·계정이 필요해 사용자가 제공할 용어 체계 덤프의 **자리**다(비어 있다).
+2026-09-23 공개 자료 다섯 가지를 **원본 그대로** 추가했다 — `mesh`(MeSH 2026 RDF, NLM), `doid`(Disease Ontology, CC0),
+`mondo`(MONDO, CC BY 4.0), `hira_ingredients`(심평원 약가마스터 의약품주성분, 공공누리 1유형), `hira_atc_mapping`(심평원 ATC코드
+매핑 목록, 공공누리 3유형 변경금지). 출처·릴리스·이용 조건은 각 `slot.json` 에 적혀 있고 **검토(`review_status`)는
+`unreviewed` 다** — 사용자가 이용 범위(`review_scope`)와 근거(`review_basis`)를 적고 `approved` 로 바꾸기 전까지
+`check-terminology.bat` 은 이 다섯 슬롯을 `incomplete` 로 보고한다(설계대로). 출처 표시 의무는 각 슬롯 README에 있다.
 RDF 저장소 엔진 `pyoxigraph` 0.5.11은 `install-kg.bat` 이 `home\kg\venv` 에 설치한다(RDFLib 7.6.0은 이미 있다).
 파서·적재기·질의 도구는 원본과 형식 명세를 받은 뒤 만든다 — 적재 결과는 `home\kg\terminology\oxigraph\` 에 둘 예정이다.
 
