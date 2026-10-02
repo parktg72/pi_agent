@@ -137,7 +137,11 @@ def main(argv: list[str], fetch: Callable[[str], dict] | None = None, process: M
     args = parser.parse_args(argv)
 
     def default_fetch(url: str) -> dict:
-        with urllib.request.urlopen(url, timeout=10) as response:
+        # 프록시를 쓰지 않는다: 이 확인은 로컬 서버에 바로 물어야 한다. LightRAG의 LLM·임베딩 호출
+        # (OpenAI SDK, httpx)은 프록시 설정을 따르므로 start-lightrag.bat이 NO_PROXY에 루프백을 넣어
+        # 실제 호출도 바로 가게 한다 - 둘이 어긋나면 확인만 통과하고 질의는 실패한다.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
     try:

@@ -28,7 +28,7 @@ set "KG_HOME=%ROOT%home\kg"
 set "KG_PY=%KG_HOME%\venv\Scripts\python.exe"
 set "KG_WORK=%KG_HOME%\work"
 if not exist "%KG_PY%" (
-  echo [FAIL] %KG_PY% not found - run install-kg.bat first
+  echo [FAIL] "%KG_PY%" not found - run install-kg.bat first
   exit /b 2
 )
 if not exist "%KG_HOME%\venv\Scripts\lightrag-server.exe" (
@@ -36,23 +36,23 @@ if not exist "%KG_HOME%\venv\Scripts\lightrag-server.exe" (
   exit /b 2
 )
 if not exist "%KG_HOME%\tiktoken_cache" (
-  echo [FAIL] %KG_HOME%\tiktoken_cache not found - rerun install-kg.bat
+  echo [FAIL] "%KG_HOME%\tiktoken_cache" not found - rerun install-kg.bat
   exit /b 2
 )
 if not exist "%ROOT%kg\lightrag.env" (
-  echo [FAIL] %ROOT%kg\lightrag.env not found
+  echo [FAIL] "%ROOT%kg\lightrag.env" not found
   exit /b 2
 )
 if not exist "%KG_WORK%\inputs" mkdir "%KG_WORK%\inputs"
 if not exist "%KG_WORK%\inputs" (
-  echo [FAIL] could not create %KG_WORK%\inputs
+  echo [FAIL] could not create "%KG_WORK%\inputs"
   exit /b 5
 )
 rem The template is copied once. Later edits in home\kg\work\.env are the
 rem operator's and are kept; delete that file to go back to the template.
 if not exist "%KG_WORK%\.env" copy /y "%ROOT%kg\lightrag.env" "%KG_WORK%\.env" >nul
 if not exist "%KG_WORK%\.env" (
-  echo [FAIL] could not copy kg\lightrag.env to %KG_WORK%\.env
+  echo [FAIL] could not copy kg\lightrag.env to "%KG_WORK%\.env"
   exit /b 5
 )
 rem The servers this bundle started are the ones LightRAG must talk to, so the
@@ -64,6 +64,12 @@ set "EMBEDDING_BINDING_HOST=http://127.0.0.1:%EMBED_PORT%/v1"
 set "RERANK_BINDING_HOST=http://127.0.0.1:%RERANK_PORT%/v1/rerank"
 set "LLM_MODEL=%MODEL_ALIAS%"
 set "TIKTOKEN_CACHE_DIR=%KG_HOME%\tiktoken_cache"
+rem The LLM and embedding calls go through the OpenAI SDK (httpx), which
+rem follows HTTP_PROXY and the Windows proxy setting; the rerank call (aiohttp)
+rem and the two start-up checks below do not. Without this, a PC with a proxy
+rem configured would pass the checks and then send every local request to the
+rem proxy. NO_PROXY is extended for this process only; an existing value is kept.
+if defined NO_PROXY (set "NO_PROXY=%NO_PROXY%,127.0.0.1,localhost") else set "NO_PROXY=127.0.0.1,localhost"
 rem Every LightRAG request (input plus output cap) must fit one slot of the LLM
 rem server on LLAMA_PORT. The values checked are the ones LightRAG will use:
 rem home\kg\work\.env as the operator left it, overridden by any process
@@ -87,7 +93,7 @@ if errorlevel 1 (
 )
 cd /d "%KG_WORK%"
 if errorlevel 1 (
-  echo [FAIL] could not change to %KG_WORK%
+  echo [FAIL] could not change to "%KG_WORK%"
   exit /b 5
 )
 echo [info] LightRAG in %KG_WORK% - documents go in %KG_WORK%\inputs
