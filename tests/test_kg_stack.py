@@ -273,6 +273,25 @@ def test_embedding_server_uses_the_bundle_llama_and_bge_settings():
     assert ub >= ctx == 8192
 
 
+@pytest.mark.parametrize("name", ["start-embedding.bat", "start-lightrag.bat", "install-kg.bat", "start-rerank.bat"])
+def test_kg_batch_files_quote_paths_echoed_inside_a_block(name):
+    # 설치 경로나 파일 이름에 괄호가 있으면, if ( ) 블록 안에서 따옴표 없이 펼쳐진 ')'가 블록을
+    # 닫아 진단 대신 구문 오류가 난다(tasks/pi-agent-reranker codex R3). PYTHON_CMD는 값에
+    # 따옴표가 들어 있을 수 있어 감싸지 않는다 - config_parse가 그 값의 문자를 따로 막는다.
+    depth = checked = 0
+    for number, line in enumerate(read(name).splitlines(), start=1):
+        stripped = line.strip()
+        if depth and stripped.startswith("echo"):
+            unquoted = re.sub(r'"[^"]*"', "", stripped).replace("%PYTHON_CMD%", "")
+            assert "%" not in unquoted, f"{name}:{number}: {stripped}"
+            checked += "%" in stripped
+        if stripped.endswith("(") and not stripped.startswith(")"):
+            depth += 1
+        elif stripped == ")":
+            depth -= 1
+    assert depth == 0 and checked >= 2
+
+
 def test_install_kg_is_offline_isolated_and_fails_loudly():
     text = read("install-kg.bat")
     assert '--no-index --find-links="%KG_WHEELS%"' in text
@@ -495,6 +514,49 @@ def test_process_environment_wins_over_the_env_file_like_lightrag():
     env_file = {"OPENAI_LLM_MAX_TOKENS": "2500", "SUMMARY_CONTEXT_SIZE": "4000"}
     merged = kg_budget.effective(env_file, {"SUMMARY_CONTEXT_SIZE": "12000", "UNRELATED": "x"})
     assert merged["SUMMARY_CONTEXT_SIZE"] == "12000" and "UNRELATED" not in merged
+
+
+def test_kg_budget_ignores_proxy_settings_for_the_local_server(tmp_path, monkeypatch):
+    # urllib은 http_proxy를 따르지만 LightRAG의 LLM 호출은 로컬 서버로 바로 간다.
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            data = json.dumps(_props(4, 8192)).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    for key in ("http_proxy", "HTTP_PROXY"):
+        monkeypatch.setenv(key, "http://127.0.0.1:9")  # 아무도 듣지 않는 포트
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text((WIN / "kg" / "lightrag.env").read_text(encoding="utf-8"), encoding="utf-8")
+    try:
+        code = kg_budget.main(["--env-file", str(env), "--base-url", f"http://127.0.0.1:{server.server_port}"], process={})
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert code == 0
+
+
+def test_start_lightrag_keeps_local_calls_off_the_proxy_before_any_check():
+    # 기동 확인(kg_budget·rerank_probe)은 프록시를 무시한다. LLM·임베딩 호출(httpx)은 따른다 -
+    # NO_PROXY에 루프백이 없으면 확인만 통과한다(tasks/pi-agent-reranker codex R6).
+    text = read("start-lightrag.bat")
+    line = 'if defined NO_PROXY (set "NO_PROXY=%NO_PROXY%,127.0.0.1,localhost") else set "NO_PROXY=127.0.0.1,localhost"'
+    assert line in text
+    assert text.index("setlocal") < text.index(line) < text.index("kg_budget.py") < text.rindex("lightrag-server.exe")
+    assert "setx" not in text.lower()
 
 
 def test_kg_budget_reads_the_slot_from_the_running_server(tmp_path):

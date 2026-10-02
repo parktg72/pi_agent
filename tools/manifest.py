@@ -50,6 +50,10 @@ EXCLUDED_ROOTS = (
     "tasks",
     "assets",
     ".claude",
+    # Pi가 실행 폴더에 만드는 프로젝트 로컬 설정(.pi\settings.json 등). 번들의 Pi 설정은
+    # home\agent에 있다. 번들 루트에서 Pi를 띄우면 생기는 폴더라, 해시 범위에 두면
+    # verify-bundle이 unexpected:로 낸다 - .venv와 같은 이유다.
+    ".pi",
     # 지식그래프 스택 반입 원본(2026-09-22). 번들에 필요한 파일은 models/·packages_win/kg/·
     # win/ 원본으로 옮겨 해시하므로, 원본 폴더를 또 해시하면 같은 20GB를 두 번 싣게 된다.
     "폐쇄망지식그래프",

@@ -27,25 +27,25 @@ set "KG_VENV=%KG_HOME%\venv"
 set "EV=%ROOT%evidence"
 if not exist "%EV%" mkdir "%EV%"
 if not exist "%KG_WHEELS%" (
-  echo [FAIL] %KG_WHEELS% not found - the KG wheelhouse was not carried in
+  echo [FAIL] "%KG_WHEELS%" not found - the KG wheelhouse was not carried in
   exit /b 2
 )
 if not exist "%KG_TIKTOKEN%\o200k_base.tiktoken" (
-  echo [FAIL] %KG_TIKTOKEN%\o200k_base.tiktoken not found
+  echo [FAIL] "%KG_TIKTOKEN%\o200k_base.tiktoken" not found
   exit /b 2
 )
 call :resolve_python
 if errorlevel 1 exit /b 4
 if not exist "%KG_HOME%" mkdir "%KG_HOME%"
 if not exist "%KG_VENV%\Scripts\python.exe" (
-  echo [1/5] creating virtual environment - %KG_VENV%
+  echo [1/5] creating virtual environment - "%KG_VENV%"
   %PYTHON_CMD% -m venv "%KG_VENV%"
   if errorlevel 1 (
-    echo [FAIL] failed to create virtual environment - %KG_VENV%
+    echo [FAIL] failed to create virtual environment - "%KG_VENV%"
     exit /b 4
   )
 ) else (
-  echo [1/5] virtual environment exists - %KG_VENV%
+  echo [1/5] virtual environment exists - "%KG_VENV%"
 )
 set "KG_PY="%KG_VENV%\Scripts\python.exe""
 echo [2/5] installing from %KG_WHEELS% only (--no-index, no network)

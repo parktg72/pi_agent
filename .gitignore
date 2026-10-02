@@ -73,6 +73,9 @@ STAGING_MANIFEST.json
 # SDD 작업 공간 (원장·브리프·리뷰 패키지)
 .superpowers/
 
+# Pi 프로젝트 로컬 설정 (실행 폴더에 생긴다)
+/.pi/
+
 # 파이썬 바이트코드
 __pycache__/
 *.pyc

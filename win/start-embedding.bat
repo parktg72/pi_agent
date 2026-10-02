@@ -24,11 +24,11 @@ if not defined EMBED_PORT set "EMBED_PORT=8081"
 if not defined EMBED_GPU set "EMBED_GPU=2"
 set "LLAMA_DIR=%ROOT%bin\llama-cuda"
 if not exist "%LLAMA_DIR%\llama-server.exe" (
-  echo [FAIL] %LLAMA_DIR%\llama-server.exe not found
+  echo [FAIL] "%LLAMA_DIR%\llama-server.exe" not found
   exit /b 2
 )
 if not exist "%ROOT%models\%EMBED_MODEL_FILE%" (
-  echo [FAIL] %ROOT%models\%EMBED_MODEL_FILE% not found
+  echo [FAIL] "%ROOT%models\%EMBED_MODEL_FILE%" not found
   exit /b 2
 )
 set "CUDA_VISIBLE_DEVICES=%EMBED_GPU%"

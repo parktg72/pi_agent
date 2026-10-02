@@ -658,6 +658,9 @@ LightRAG가 부를 서버 주소와 모델 이름은 `config.env` 의 `LLAMA_POR
 bat이 넣는다 — `.env` 의 같은 키보다 우선한다. 추출은 사고를 끈다(`enable_thinking: false`).
 품질 영향은 아직 재지 않았다.
 
+PC에 프록시가 설정돼 있어도(환경변수 `HTTP_PROXY` 나 Windows 프록시 설정) LightRAG가 로컬 서버를 부르는 요청이 프록시로
+가지 않도록, `start-lightrag.bat` 이 그 창에서만 `NO_PROXY` 에 `127.0.0.1,localhost` 를 더한다(기존 값은 유지). 대상 PC에서 확인한 적은 없다.
+
 임베딩 서버의 벡터 길이가 **1024** 인지 확인한다(`EMBEDDING_DIM` 과 같아야 인덱싱이 깨지지 않는다):
 
 ```
@@ -710,9 +713,11 @@ d3 7.9.0, mermaid 11.17.2 — `packages_win\kg\web\`)을 가리키게 바꾼다.
 `terminology\{kcd8,icd10,atc,umls,omop}\` 는 라이선스·계정이 필요해 사용자가 제공할 용어 체계 덤프의 **자리**다(비어 있다).
 2026-09-23 공개 자료 다섯 가지를 **원본 그대로** 추가했다 — `mesh`(MeSH 2026 RDF, NLM), `doid`(Disease Ontology, CC0),
 `mondo`(MONDO, CC BY 4.0), `hira_ingredients`(심평원 약가마스터 의약품주성분, 공공누리 1유형), `hira_atc_mapping`(심평원 ATC코드
-매핑 목록, 공공누리 3유형 변경금지). 출처·릴리스·이용 조건은 각 `slot.json` 에 적혀 있고 **검토(`review_status`)는
-`unreviewed` 다** — 사용자가 이용 범위(`review_scope`)와 근거(`review_basis`)를 적고 `approved` 로 바꾸기 전까지
-`check-terminology.bat` 은 이 다섯 슬롯을 `incomplete` 로 보고한다(설계대로). 출처 표시 의무는 각 슬롯 README에 있다.
+매핑 목록, 공공누리 3유형 변경금지). 출처·릴리스·이용 조건은 각 `slot.json` 에 적혀 있고, 2026-10-02 다섯 슬롯 모두 이용 범위(`review_scope`)와
+근거(`review_basis`)를 적어 **`approved`** 로 바꿨다 — `check-terminology.bat` 은 이 다섯을 `recorded` 로 보고한다.
+승인한 범위는 **폐쇄망 PC 내부 보관·조회·분석 참조, 번들 밖 재배포 없음**이다. `hira_atc_mapping`(변경금지)은
+**원본 그대로 조회하는 것만** 승인했다 — 변환본이나 RDF 저장소 적재본을 만드는 것은 범위 밖이고, 적재기를 만들 때 다시
+검토한다. 이 범위를 넘겨 쓰려면 `slot.json` 을 먼저 고친다. 출처 표시 의무는 각 슬롯 README에 있다.
 RDF 저장소 엔진 `pyoxigraph` 0.5.11은 `install-kg.bat` 이 `home\kg\venv` 에 설치한다(RDFLib 7.6.0은 이미 있다).
 파서·적재기·질의 도구는 원본과 형식 명세를 받은 뒤 만든다 — 적재 결과는 `home\kg\terminology\oxigraph\` 에 둘 예정이다.
 
