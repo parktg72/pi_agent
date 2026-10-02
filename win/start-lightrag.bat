@@ -13,14 +13,16 @@ if errorlevel 1 exit /b 4
 call :load_config
 if errorlevel 1 exit /b 6
 rem Starts the LightRAG server (WebUI http://127.0.0.1:9621) from home\kg\work.
-rem Needs: install-kg.bat once, start-llama.bat kg (port LLAMA_PORT) and
-rem start-embedding.bat (port EMBED_PORT) running. The tokenizer cache is set
+rem Needs: install-kg.bat once, start-llama.bat kg (port LLAMA_PORT),
+rem start-embedding.bat (port EMBED_PORT) and start-rerank.bat (port
+rem RERANK_PORT) running. The tokenizer cache is set
 rem for this process only - no user-wide environment variable is written.
 rem Every step that can fail stops the script with a nonzero code: a server
 rem started without its .env would fall back to the library defaults, which
 rem point at external endpoints.
 if not defined LLAMA_PORT set "LLAMA_PORT=8080"
 if not defined EMBED_PORT set "EMBED_PORT=8081"
+if not defined RERANK_PORT set "RERANK_PORT=8082"
 if not defined MODEL_ALIAS set "MODEL_ALIAS=qwen3.8-27b"
 set "KG_HOME=%ROOT%home\kg"
 set "KG_PY=%KG_HOME%\venv\Scripts\python.exe"
@@ -59,6 +61,7 @@ rem override=False (lightrag\api\config.py), so these process values win over
 rem the same keys in .env.
 set "LLM_BINDING_HOST=http://127.0.0.1:%LLAMA_PORT%/v1"
 set "EMBEDDING_BINDING_HOST=http://127.0.0.1:%EMBED_PORT%/v1"
+set "RERANK_BINDING_HOST=http://127.0.0.1:%RERANK_PORT%/v1/rerank"
 set "LLM_MODEL=%MODEL_ALIAS%"
 set "TIKTOKEN_CACHE_DIR=%KG_HOME%\tiktoken_cache"
 rem Every LightRAG request (input plus output cap) must fit one slot of the LLM
@@ -71,6 +74,17 @@ if errorlevel 1 (
   echo [FAIL] LightRAG was not started - start start-llama.bat kg first, and keep the .env caps within one slot
   exit /b 3
 )
+rem LightRAG keeps answering queries when a rerank call fails - it logs the
+rem error and uses the original chunk order - so a missing reranker would go
+rem unnoticed. When the .env has rerank on (RERANK_BINDING=cohere, the
+rem template's value), one real request is sent to RERANK_BINDING_HOST and
+rem anything but a reranker's answer stops the start. The same tool refuses a
+rem LightRAG PORT that equals a server port. RERANK_BINDING=null skips the request.
+"%KG_PY%" "%ROOT%tools\rerank_probe.py" --env-file "%KG_WORK%\.env" --llama-port %LLAMA_PORT% --embed-port %EMBED_PORT%
+if errorlevel 1 (
+  echo [FAIL] LightRAG was not started - start start-rerank.bat first, or turn rerank off in home\kg\work\.env
+  exit /b 3
+)
 cd /d "%KG_WORK%"
 if errorlevel 1 (
   echo [FAIL] could not change to %KG_WORK%
@@ -78,6 +92,7 @@ if errorlevel 1 (
 )
 echo [info] LightRAG in %KG_WORK% - documents go in %KG_WORK%\inputs
 echo [info] LLM %LLM_BINDING_HOST% as %LLM_MODEL%, embeddings %EMBEDDING_BINDING_HOST%
+echo [info] rerank %RERANK_BINDING_HOST% (used when RERANK_BINDING in .env is not null)
 "%KG_HOME%\venv\Scripts\lightrag-server.exe"
 exit /b %errorlevel%
 

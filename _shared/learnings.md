@@ -103,3 +103,8 @@
 **교훈**: "학습 입력 = 추론 입력" 같은 동등성은 **실제 소비 엔진**으로 대조해야 한다. B단계는 양쪽을 같은 jinja2로 렌더해 일치를 확인했지만, C단계에서 실제 추론 엔진(llama-server의 minja + 요청 정규화)에 `/apply-template`·`/tokenize`로 물어보자 서버가 도구 정의의 필드를 버리는 차이가 나왔다. 대리 구현으로 한 검증은 "대리끼리 같다"만 증명한다. 또 리뷰 pane이 "첫 스텝에서 크래시"라고 단언한 것은 같은 클래스·버전의 초소형 모델 실측으로 반박됐고, 다른 pane의 "과금 종료·checkpoint 회수 불완전" 지적 8건은 대부분 유효해 가짜 CLI 테스트와 함께 고쳤다 — 유료 자원을 쓰는 스크립트는 실패·중단 경로를 모의 도구로 먼저 돌린다.
 **근거**: tasks/pi-agent-lora-upgrade/artifacts/c-probe/template_parity.py, tests/test_colab_lora_run.py, log.md C단계 항목.
 **worker**: orchestrator(구현·실측), herdr pane agy·opencode(R1·R2 합의, 코드 리뷰)
+
+## [2026-10-02] [pi-agent-reranker]
+**교훈**: (1) "이 PC에서는 실행 검증 불가"라고 적기 전에 `_local/learnings.md`·이전 log를 먼저 찾는다 — Windows 실행 파일이 WSL에서 안 돌아도 같은 릴리스의 Linux 빌드로 인자·엔드포인트·바인딩 왕복은 확인할 수 있었고, 그 방법은 이미 기록돼 있었다. 실측 한 번이 pane 3자 모두 "추정"으로 남긴 항목(점수가 로짓인지)을 닫았다. (2) 실패해도 조용히 대체 동작하는 라이브러리(LightRAG rerank → 원래 순서)는 "질의 성공"이 연결의 증거가 아니다 — 기동 전에 실제 요청을 한 번 보내 거부하는 probe를 둔다. (3) 리뷰 pane의 가치는 고르지 않다: 한 pane은 지적 0건 ship, 다른 pane은 6건(전부 유효, 그중 1건은 p1이 방금 추가한 회귀 테스트가 CRLF 정규화 때문에 아무것도 검사하지 않는다는 것). 새 회귀 테스트는 고친 것을 되돌린 변형에서 실패하는지 직접 확인한다. (4) pane 운용: 답은 지정 파일 하나에 쓰게 하고 파일 존재로 완료를 판정한다(`herdr agent wait`는 이전 턴의 done에 걸린다). 파일 읽기 도구가 없는 에이전트에 "셸 금지"를 붙이면 질문도 못 읽는다. 느린 로컬 모델 pane은 라운드를 기다리지 말고 미제출로 기록하고 진행한다. (5) `pkill -f <패턴>`은 그 패턴을 명령줄에 담은 자기 셸도 죽인다 — `pgrep -x`로 이름을 정확히 집는다.
+**근거**: tasks/pi-agent-reranker/artifacts/consensus.md, cpu-smoke.md, panes/codex-r3.md·codex-r4.md, log.md.
+**worker**: orchestrator(설계·구현·실측), herdr pane codex·agy(R1·R2 합의, R3~R5 코드 리뷰), pi pane 미제출

@@ -644,3 +644,17 @@ pane(codex·agy) 2라운드. 근거: 개발 트리 `tasks/pi-agent-med-data/arti
 - 보류: HPO(라이선스 원문 미확인), ICD-10-CM(WHO ICD-10·KCD와 혼선). 사용자 제공: KCD-8(통계분류포털 파일 링크 미확정), WHO ICD-10, WHOCC ATC/DDD, UMLS, OMOP.
 - 적재기는 아직 없다. MeSH(N-Triples)·DOID/MONDO(RDF/XML)는 pyoxigraph가 직접 읽는 형식이지만 적재 자원 사용량은 적재 작업 때 잰다.
 
+### 14.11 리랭커 서버 연결 (2026-10-02)
+
+사용자 지시: bge-reranker-v2-m3 Q8_0 반입, 서버 연결을 pane 합의로, GPU 없는 PC라 설정만. pane(codex·agy) 설계 2라운드 + 코드 리뷰. 근거: 개발 트리 `tasks/pi-agent-reranker/artifacts/consensus.md`. **대상 PC·Windows CUDA 빌드 실측 없음 — 리허설 11-24.** 스테이징 PC에서 같은 릴리스의 Linux CPU 빌드(sha256 `d0080249…`)로 인자·`/v1/rerank` 응답·LightRAG cohere 바인딩 왕복·probe를 확인했다(`tasks/pi-agent-reranker/artifacts/cpu-smoke.md`).
+
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| 모델 | `models\bge-reranker-v2-m3-Q8_0.gguf`(gpustack, 635,676,416 B, sha256 `a43c7c9b…`, HF LFS oid 일치) | GGUF 메타 bert·24층·창 8192, 분류 머리 텐서(`cls.weight`, `cls.output.weight`) 확인 |
+| 서버 | `start-rerank.bat` — 번들 llama-server `--reranking --pooling rank --alias bge-reranker-v2-m3 -c/-b/-ub 8192 -np 1`, `CUDA_VISIBLE_DEVICES=RERANK_GPU` | b11010은 프로세스당 풀링 하나라 임베딩 서버와 합칠 수 없다. 문서 1개 = 작업 1개(질의+문서 한 쌍이 한 창). `-np` 기본은 auto |
+| 설정 키 | `RERANK_MODEL_FILE`·`RERANK_PORT`(8082)·`RERANK_GPU`(2). `GPU_TENSOR_SPLIT` 은 그대로 | split은 대상 PC 실측으로 다시 정하는 값 |
+| 포트 검사 | `config_parse.cross_check` 가 LLAMA/EMBED/RERANK 세 포트를 bat 기본값으로 채워 정수로 비교 | 이전 검사는 문자열 비교·명시 값만 봐서 `08081` 과 `8081`, 생략된 키의 기본값 충돌을 놓쳤다 |
+| LightRAG | `RERANK_BINDING=cohere`, host `http://127.0.0.1:<RERANK_PORT>/v1/rerank`(bat 주입), 분할 끔, `MIN_RERANK_SCORE=0.0`, `MAX_ASYNC_RERANK=1`, `RERANK_TIMEOUT=120` | cohere 바인딩의 요청·응답이 llama-server `/v1/rerank` 와 같은 모양. 점수(`embd[0]`)는 로짓(CPU 실측 1.88 / -9.76 / -11.03)이라 0~1 기준 임계 필터를 쓰지 않는다. 창을 넘는 문서가 하나라도 있으면 요청 전체가 HTTP 500 |
+| 기동 확인 | `tools/rerank_probe.py`(start-lightrag.bat) — 유효 설정(.env + 프로세스 환경, override=False)이 cohere면 문서 2개·top_n 2 요청을 보내 결과 2개·index {0,1}·유한 점수를 확인, 아니면 기동 거부(exit 3). null이면 생략. 다른 바인딩 거부. LightRAG `PORT` 와 서버 포트 충돌도 거부 | LightRAG 1.5.7은 rerank 실패 시 원래 순서로 조용히 계속한다 — 질의 성공이 연결의 증거가 아니다 |
+| 범위 밖 | `stage._model_check` 의 분류 머리 검사, split 조정, 점수 임계값 | 실측 뒤 |
+
