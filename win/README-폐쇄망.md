@@ -15,7 +15,7 @@
 | 4 | `start-llama.bat` | **매번**, 가장 먼저 | 전용 창 — 닫지 않는다 |
 | 5 | `start-pi.bat` | **매번**, 4번 다음 | 작업 폴더에서 |
 | 6 | `verify-offline.bat` | 최초 1회 + 문제 생겼을 때 | 아무 창 |
-| 7 | `install-kg.bat` → `start-llama.bat kg` + `start-embedding.bat` + `start-lightrag.bat` | 지식그래프 작업이 필요할 때만 | 아래 "지식그래프 스택" 절 |
+| 7 | `install-kg.bat` → `start-llama.bat kg` + `start-embedding.bat` + `start-rerank.bat` + `start-lightrag.bat` | 지식그래프 작업이 필요할 때만 | 아래 "지식그래프 스택" 절 |
 
 **매번 반복되는 것은 4→5 둘뿐이다.** 나머지는 처음 한 번이다.
 
@@ -466,6 +466,7 @@ Pi 0.85.1은 긴 작업을 이렇게 멈춘다(소스 추적, 2026-09-17):
 | `LEARNING_AUTO_REFLECT` | `1` (켜짐) | 학습 확장의 자동 반성. 위 "학습 확장" 절 |
 | `LORA_FILE` / `LORA_SCALE` | 비움 / 1.0 | 아래 "LoRA" 절. **어댑터는 `MODEL_FILE=Qwen3.8-27B-Q6_K.gguf` 에서만 받는다** — UD-Q5_K_M은 적재 검증 전이라 `config.env` 검사가 거부한다 |
 | `KG_CTX` / `KG_PARALLEL` / `EMBED_*` | 32768 / 4 / bge-m3·8081·GPU 2 | 아래 "지식그래프 스택" 절 |
+| `RERANK_MODEL_FILE` / `RERANK_PORT` / `RERANK_GPU` | bge-reranker-v2-m3-Q8_0.gguf / 8082 / GPU 2 | 아래 "지식그래프 스택" 절의 "리랭커". `LLAMA_PORT`·`EMBED_PORT`·`RERANK_PORT` 는 서로 달라야 한다 |
 
 양자화 선택 (2026-09-22 변경): **기본은 UD-Q5_K_M**(Unsloth dynamic, 18.4 GiB, sha256
 `2de73110…` — HF 원본 LFS 해시와 스테이징 PC 재계산 일치), 백업은 Q6_K(20.9 GiB — LoRA
@@ -624,6 +625,7 @@ NetworkX·rdflib, 코드/문서를 그래프로 바꾸는 graphify가 들어 있
 | `packages_win\kg\wheelhouse\` | 휠 276개(py3.12 win_amd64). numpy·boto3는 패키지 간 핀이 충돌해 두 버전씩 들어 있어서, 통계 스택(`packages_win\py312`, `.venv`)과 **섞지 않는다** |
 | `packages_win\kg\tiktoken\` | tiktoken 원본(cl100k_base, o200k_base) |
 | `models\bge-m3-FP16.gguf` | 임베딩 모델(1024차원, 다국어, 최대 8192토큰) |
+| `models\bge-reranker-v2-m3-Q8_0.gguf` | 리랭커 모델(질의-청크 쌍 채점, 최대 8192토큰, 2026-10-02) |
 | `kg\lightrag.env` | LightRAG 설정 템플릿 |
 | `pi-skills\graphify\` | graphify 스킬의 폐쇄망판(아래) |
 | `home\kg\` | `install-kg.bat` 이 대상 PC에서 만드는 venv·토크나이저 캐시·작업 폴더(매니페스트 밖) |
@@ -634,7 +636,8 @@ NetworkX·rdflib, 코드/문서를 그래프로 바꾸는 graphify가 들어 있
 C:\pi_agent\install-kg.bat            :: 최초 1회. home\kg\venv 생성, --no-index 설치, pip check, 토크나이저 캐시
 C:\pi_agent\start-llama.bat kg        :: 창 1 - LLM(kg 프로파일, 8080)
 C:\pi_agent\start-embedding.bat       :: 창 2 - 임베딩(8081, GPU 2)
-C:\pi_agent\start-lightrag.bat        :: 창 3 - LightRAG, WebUI http://127.0.0.1:9621
+C:\pi_agent\start-rerank.bat          :: 창 3 - 리랭커(8082, GPU 2)
+C:\pi_agent\start-lightrag.bat        :: 창 4 - LightRAG, WebUI http://127.0.0.1:9621
 ```
 
 문서는 `home\kg\work\inputs` 에 넣고 WebUI에서 인덱싱한다. 결과는 `home\kg\work\rag_storage\`
@@ -659,6 +662,35 @@ bat이 넣는다 — `.env` 의 같은 키보다 우선한다. 추출은 사고�
 
 ```
 curl http://127.0.0.1:8081/v1/embeddings -H "Content-Type: application/json" -d "{\"model\":\"bge-m3\",\"input\":\"테스트\"}"
+```
+
+### 리랭커 (bge-reranker-v2-m3, 2026-10-02)
+
+질의 때 LightRAG가 찾아낸 청크를 질의와 한 쌍씩 다시 채점해 순서를 바꾼다(문서를 넣는 인덱싱에는 쓰지 않는다).
+`start-rerank.bat` 이 번들 llama-server를 `--reranking --pooling rank` 로 따로 띄운다 — 임베딩 서버와 풀링이 달라
+한 프로세스로 합칠 수 없다. `kg\lightrag.env` 는 이것을 켜 둔다(`RERANK_BINDING=cohere`, 주소는 bat이
+`RERANK_PORT` 로 넣는다). `tasks/pi-agent-reranker` 합의.
+
+**이 설정은 GPU 없는 PC에서 만들었고 번들의 Windows CUDA 서버로는 한 번도 띄워 보지 않았다.** 스테이징 PC에서
+같은 릴리스(b11010)의 Linux CPU 빌드에 같은 인자를 줘서 확인한 것은 여기까지다: 슬롯 1개·창 8192로 뜬다,
+`/v1/rerank` 가 `results[].index·relevance_score` 를 준다, LightRAG 1.5.7의 cohere 바인딩 함수가 그 답을 받는다,
+`rerank_probe.py` 가 통과한다. VRAM(GPU 2에 LLM 몫 + 임베딩 + 리랭커), 지연, 품질은 리허설 11-24에서 잰다.
+
+- LightRAG는 rerank 호출이 실패해도 오류 로그만 남기고 원래 청크 순서로 답한다 — 질의가 된다고 리랭커가 붙은 것이
+  아니다. 그래서 `start-lightrag.bat` 이 기동 직전에 실제 요청을 한 번 보내 보고(`tools\rerank_probe.py`), 리랭커
+  답이 아니면 LightRAG를 띄우지 않는다(exit 3). 같은 도구가 LightRAG `PORT` 가 서버 포트와 겹치는지도 본다.
+- 리랭커 없이 쓰려면 `home\kg\work\.env` 에 `RERANK_BINDING=null` 과 `RERANK_BY_DEFAULT=false` 를 둔다. 그러면
+  `start-rerank.bat` 을 띄우지 않아도 된다. 바인딩은 `cohere` 와 `null` 만 받는다.
+- `MIN_RERANK_SCORE=0.0` 은 점수로 청크를 버리지 않는다는 뜻이다. llama-server의 점수는 0~1이 아닌 로짓이다
+  (Linux CPU 빌드로 잰 예: 관련 문서 1.88, 무관한 문서 -9.76·-11.03) — 0.6 같은 값을 넣으면 쓸 청크까지 버려진다.
+- 문서 하나라도 리랭커 창(8192 토큰)을 넘으면 서버가 그 요청 전체를 HTTP 500으로 거절하고, LightRAG는 그 질의를
+  원래 순서로 답한다(오류 로그만 남는다). `CHUNK_SIZE` 를 크게 올리면 이 경우가 생긴다.
+- 모델을 올리는 동안 서버는 503을 준다 — 리랭커 창에 `listening` 이 뜬 뒤 `start-lightrag.bat` 을 실행한다.
+- 이 번들을 2026-10-02 전에 설치해 `home\kg\work\.env` 가 이미 있으면 리랭커 줄이 없다(끈 상태로 뜬다).
+  `kg\lightrag.env` 의 리랭커 블록을 그 파일에 옮겨 적는다.
+
+```
+curl http://127.0.0.1:8082/v1/rerank -H "Content-Type: application/json" -d "{\"model\":\"bge-reranker-v2-m3\",\"query\":\"panda\",\"top_n\":2,\"documents\":[\"hi\",\"The giant panda is a bear.\"]}"
 ```
 
 ### graphify
@@ -696,9 +728,9 @@ RDF 저장소 엔진 `pyoxigraph` 0.5.11은 `install-kg.bat` 이 `home\kg\venv` 
 
 ### 확인할 것
 
-- `netstat -ano | findstr "8080 8081 9621"` 로 전부 `127.0.0.1` 에만 바인딩됐는지
+- `netstat -ano | findstr "8080 8081 8082 9621"` 로 전부 `127.0.0.1` 에만 바인딩됐는지
 - 방화벽 아웃바운드 차단 상태에서 설치·인덱싱이 끝나는지(외부 호출이 없는지)
-- `nvidia-smi -l 5` 로 GPU 2의 LLM 몫 + 임베딩 몫이 11GB를 넘지 않는지
+- `nvidia-smi -l 5` 로 GPU 2의 LLM 몫 + 임베딩 몫 + 리랭커 몫이 11GB를 넘지 않는지
 
 ## 하지 않는 것
 - `pi install` 로 패키지나 확장을 새로 설치하지 않는다. npm이 필요하고

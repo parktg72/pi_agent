@@ -64,6 +64,7 @@ STAGING_MANIFEST.json
 /start-embedding.bat
 /install-kg.bat
 /start-lightrag.bat
+/start-rerank.bat
 /check-terminology.bat
 /pi-skills/
 /chat-templates/

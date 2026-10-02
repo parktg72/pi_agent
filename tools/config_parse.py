@@ -153,6 +153,8 @@ LLAMA_BATCH = 1024
 # kg 프로파일 슬롯 창 하한. kg\\lightrag.env의 요청 상한(입력 4000 + 출력 2500 등)이 이 크기를
 # 가정한다(codex R4 #7). start-lightrag.bat도 떠 있는 서버를 같은 값으로 확인한다.
 KG_MIN_SLOT_CTX = 8192
+# start-llama.bat / start-embedding.bat / start-rerank.bat이 키가 비었을 때 쓰는 포트.
+SERVER_PORT_DEFAULTS = {"LLAMA_PORT": "8080", "EMBED_PORT": "8081", "RERANK_PORT": "8082"}
 
 
 def _check_kv_type(value: str) -> str | None:
@@ -266,6 +268,10 @@ ALLOWED_KEYS: dict[str, object] = {
     "EMBED_MODEL_FILE": _check_filename,
     "EMBED_PORT": _check_port,
     "EMBED_GPU": _check_gpu_index,
+    # start-rerank.bat(bge-reranker-v2-m3, tasks/pi-agent-reranker 합의). 임베딩과 같은 방식.
+    "RERANK_MODEL_FILE": _check_filename,
+    "RERANK_PORT": _check_port,
+    "RERANK_GPU": _check_gpu_index,
 }
 
 
@@ -346,10 +352,17 @@ def cross_check(values: dict[str, str]) -> list[str]:
                 f"KG 슬롯당 창 {int(kg_ctx) // int(kg_parallel)}이 {KG_MIN_SLOT_CTX}보다 작다 - kg\\lightrag.env의 "
                 "요청 상한이 이 크기를 가정한다. KG_CTX를 늘리거나 KG_PARALLEL을 줄여라"
             )
-    llama_port = values.get("LLAMA_PORT", "")
-    embed_port = values.get("EMBED_PORT", "")
-    if llama_port and embed_port and llama_port == embed_port:
-        problems.append(f"EMBED_PORT={embed_port}가 LLAMA_PORT와 같다 - 두 서버가 한 포트를 두고 다툰다")
+    # 비운 키와 없는 키는 .bat의 기본값으로 뜬다. 그 값까지 채워 정수로 비교해야 08081과 8081,
+    # 기본값끼리의 충돌이 걸린다(tasks/pi-agent-reranker 합의 8). 검사를 못 넘긴 값은 values에
+    # 없으므로 여기서도 기본값으로 본다 - 그 줄은 이미 따로 거부됐다.
+    ports = {key: int(values.get(key) or default) for key, default in SERVER_PORT_DEFAULTS.items()}
+    names = list(ports)
+    for index, first in enumerate(names):
+        for second in names[index + 1:]:
+            if ports[first] == ports[second]:
+                problems.append(
+                    f"{second}={ports[second]}가 {first}와 같다 - 두 서버가 한 포트를 두고 다툰다"
+                )
     return problems
 
 
