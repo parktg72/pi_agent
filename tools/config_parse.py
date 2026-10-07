@@ -257,6 +257,9 @@ ALLOWED_KEYS: dict[str, object] = {
     "LORA_SCALE": _check_lora_scale,
     # pi-extensions\learning.ts 자동 반성. start-pi.bat이 환경변수로 넘기고 확장이 읽는다.
     "LEARNING_AUTO_REFLECT": _check_flag,
+    # start-pi.bat: 0이면 pi-subagents 도구 3개를 요청에서 뺀다(패키지·스킬·훅은 그대로).
+    # 리허설 11-17의 켬/끔 비교용(tasks/pi-agent-subagents-switch 합의).
+    "PI_SUBAGENT_TOOLS": _check_flag,
     # 2026-09-22 KG 정렬(tasks/pi-agent-kg-align 합의). 비우면 start-*.bat의 기본값을 쓴다.
     "LLAMA_FLASH_ATTN": _check_flash_attn,
     # chat-templates\ 아래 템플릿으로 모델 내장 템플릿을 덮는다. 비우면 내장 템플릿.

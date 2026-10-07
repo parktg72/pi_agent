@@ -658,3 +658,24 @@ pane(codex·agy) 2라운드. 근거: 개발 트리 `tasks/pi-agent-med-data/arti
 | 기동 확인 | `tools/rerank_probe.py`(start-lightrag.bat) — 유효 설정(.env + 프로세스 환경, override=False)이 cohere면 문서 2개·top_n 2 요청을 보내 결과 2개·index {0,1}·유한 점수를 확인, 아니면 기동 거부(exit 3). null이면 생략. 다른 바인딩 거부. LightRAG `PORT` 와 서버 포트 충돌도 거부 | LightRAG 1.5.7은 rerank 실패 시 원래 순서로 조용히 계속한다 — 질의 성공이 연결의 증거가 아니다 |
 | 범위 밖 | `stage._model_check` 의 분류 머리 검사, split 조정, 점수 임계값 | 실측 뒤 |
 
+### 14.12 pi-subagents 도구 스위치 (2026-10-02)
+
+09-22 방향 합의 3("패키지는 두고 도구만 끄는 가역 스위치를 리허설 전에")의 구현. pane(codex·agy) 설계 2라운드 + 코드 리뷰. 근거: 개발 트리 `tasks/pi-agent-subagents-switch/artifacts/consensus.md`, 실측 `artifacts/probe/`. 리허설 전 Pi 코어 동결(§14.10)의 예외로 `start-pi.bat`을 최소 변경했다.
+
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| 키 | `PI_SUBAGENT_TOOLS=1\|0`, 빈 값·생략 = 1(지금 동작). 기본값 결정은 리허설 11-17 뒤 | 부모 합의. 이름은 범위(도구)를 담는다 — 패키지를 켜고 끄는 것이 아니다 |
+| 수단 | 0이면 `start-pi.bat`이 `--exclude-tools subagent,bg_wait,subagent_supervisor`를 `%*` 앞에 붙인다. settings.json·패키지 트리·스킬·프롬프트·명령·훅은 그대로 | settings.json은 운영자 소유(덮어쓰지 않는다). 패키지 필터 `extensions: []`는 확장 전체를 내려 합의 범위보다 넓다 |
+| 인자 충돌 | 0인데 운영자 인자의 `--` 앞에 `--exclude-tools`/`-xt`가 있으면 기동 거부(exit 12). `tools/subagent_switch.py`가 argv로 판정 | 실측: Pi 0.85.1은 `--exclude-tools`를 마지막 것만 적용 — 뒤의 운영자 목록이 세 도구를 되살린다. `--tools` 허용 목록에는 exclude가 이긴다(실측) |
+| 모델 쪽 안내 | 넣지 않음. off의 요청 차이를 "도구 3개 제외" 하나로 둔다 | 스킬 호환은 11-17에서 잰다. 모델이 없는 도구를 부르려다 헤매면 그때 추가 |
+| 범위 밖 | 기본값 변경, 패키지 제거, superpowers 스킬 숨김, `verify-offline.bat`·`lora-snapshot`·export·`pi_settings` 수정 | lora-snapshot은 실제 요청의 도구 목록을 그대로 기록하므로 켬/끔이 학습 데이터에 남는다 |
+
+실측(2026-10-02, 스테이징 PC Windows, 번들 pi.exe 0.85.1 + 모의 OpenAI 서버, `--no-session --mode json -p`, **문자 수만** — 토큰·시간·대화형 모드는 재지 않았다):
+
+| 경로 | on 요청 문자 | off 요청 문자 | 차이 |
+|---|---|---|---|
+| pi.exe 직접(확장 2종, retro 템플릿·graphify 스킬 없음) | 46,586 | 22,943 | 23,643 (50.8%) |
+| `start-pi.bat` 전체(운영 구성 그대로) | 60,235 | 36,592 | 23,643 (39.3%) |
+
+도구별(on): subagent 18,430 / bg_wait 4,482 / subagent_supervisor 502 자. off는 system 프롬프트에서도 subagent 지침 2줄(221자)이 빠진다. `start-pi.bat` 경로로 확인한 것: 키 없음·빈 값·1은 도구 10개 그대로, 0은 7개, 0 + `--exclude-tools read`/`-xt read`는 exit 12에 요청 0건, 0 + `--tools read,subagent`는 read만, 괄호·쉼표·세미콜론·`--exclude-tools` 글자가 든 프롬프트는 그대로 전달. §14.7의 "약 51%"는 첫 줄의 경로 기준 문자 비중이다.
+

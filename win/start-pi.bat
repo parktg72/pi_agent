@@ -42,6 +42,28 @@ rem Python before that.
 call :resolve_python
 if errorlevel 1 exit /b 4
 
+rem pi-subagents tool switch (tasks\pi-agent-subagents-switch). PI_SUBAGENT_TOOLS=0
+rem keeps the package, its skills, prompts, commands and hooks, and only leaves
+rem its three tools out of every request with --exclude-tools; 1 (the default,
+rem also for a blank or missing key) changes nothing. It exists so rehearsal
+rem 11-17 can compare the two. It is not a lock: it narrows what the model is
+rem offered, nothing more. Pi applies only the last --exclude-tools it is given
+rem (measured 2026-10-02), so an operator's own --exclude-tools or -xt after
+rem ours would silently bring the tools back - that combination is refused
+rem here, before the model wait. The arguments are checked by Python because a
+rem batch for loop splits on commas and expands wildcards.
+if not defined PI_SUBAGENT_TOOLS set "PI_SUBAGENT_TOOLS=1"
+set "SUBAGENT_ARG="
+if not "%PI_SUBAGENT_TOOLS%"=="0" goto :subagent_tools_on
+%PYTHON_CMD% "%ROOT%tools\subagent_switch.py" %*
+if errorlevel 1 exit /b 12
+set "SUBAGENT_ARG=--exclude-tools subagent,bg_wait,subagent_supervisor"
+echo [info] pi-subagents tools: off - PI_SUBAGENT_TOOLS=0 excludes subagent, bg_wait, subagent_supervisor. Set it to 1 and restart to bring them back.
+goto :subagent_tools_done
+:subagent_tools_on
+echo [info] pi-subagents tools: on - PI_SUBAGENT_TOOLS=1
+:subagent_tools_done
+
 call :sync_packages
 if errorlevel 1 exit /b 7
 
@@ -127,7 +149,7 @@ rem They run graphify as home\kg\venv\Scripts\python.exe -m graphify, never from
 rem PATH, so another graphify on this PC cannot mix into a bundle run.
 set "PI_AGENT_ROOT=%ROOT:\=/%"
 set "PI_AGENT_ROOT=%PI_AGENT_ROOT:~0,-1%"
-"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %SKILL_ARG% %*
+"%ROOT%bin\pi\pi.exe" --offline --model "%PI_MODEL_ID%" --thinking "%PI_THINKING%" %PROMPT_ARG% %EXT_ARG% %SKILL_ARG% %SUBAGENT_ARG% %*
 exit /b %errorlevel%
 
 :place_models_json

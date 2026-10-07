@@ -221,6 +221,7 @@ Qwen3.8 채팅 템플릿은 요청에 `reasoning_effort` 가 없으면 스스로
 | 8 | `start-llama.bat` | `LLAMA_BACKEND=vulkan` 은 이 모델에서 금지다 |
 | 9 | `start-llama.bat` | `LLAMA_BACKEND=cpu` 에 `ALLOW_CPU_DIAGNOSTIC=1` 이 없다 |
 | 10 | `start-pi.bat` | `home\agent\settings.json` 이 JSON이 아니어서 컨텍스트 안전값을 넣지 못했다 — 고치거나 지우고 다시 실행 |
+| 12 | `start-pi.bat` | `PI_SUBAGENT_TOOLS=0` 인데 `--exclude-tools`/`-xt` 인자를 직접 줬다 — 아래 "pi-subagents 도구 스위치" |
 
 `pi.exe` 자신의 종료 코드는 `start-pi.bat` 이 그대로 전달한다. 다만 그것을
 성공의 증거로 쓰지는 않는다 — `stopReason: error` 직후에도 0을 반환한 실측이
@@ -464,6 +465,7 @@ Pi 0.85.1은 긴 작업을 이렇게 멈춘다(소스 추적, 2026-09-17):
 | (고정) `-b 1024`, `--no-mmap`, `-sm layer` | 항상 | 지식그래프 번들 가이드의 값. `--no-mmap` 은 윈도우에서 초기 적재를 안정시키려는 것, `-sm tensor` 는 FA가 필요해 쓰지 않는다 |
 | `LLAMA_SPEC_MTP` | `0` (꺼짐) | 모델 내장 MTP 층으로 추측 디코딩. 리허설 A/B 후 켠다 |
 | `LEARNING_AUTO_REFLECT` | `1` (켜짐) | 학습 확장의 자동 반성. 위 "학습 확장" 절 |
+| `PI_SUBAGENT_TOOLS` | `1` (켜짐) | `0` 이면 pi-subagents 도구 3개(`subagent`, `bg_wait`, `subagent_supervisor`)를 요청에서 뺀다. 아래 "pi-subagents 도구 스위치" |
 | `LORA_FILE` / `LORA_SCALE` | 비움 / 1.0 | 아래 "LoRA" 절. **어댑터는 `MODEL_FILE=Qwen3.8-27B-Q6_K.gguf` 에서만 받는다** — UD-Q5_K_M은 적재 검증 전이라 `config.env` 검사가 거부한다 |
 | `KG_CTX` / `KG_PARALLEL` / `EMBED_*` | 32768 / 4 / bge-m3·8081·GPU 2 | 아래 "지식그래프 스택" 절 |
 | `RERANK_MODEL_FILE` / `RERANK_PORT` / `RERANK_GPU` | bge-reranker-v2-m3-Q8_0.gguf / 8082 / GPU 2 | 아래 "지식그래프 스택" 절의 "리랭커". `LLAMA_PORT`·`EMBED_PORT`·`RERANK_PORT` 는 서로 달라야 한다 |
@@ -612,6 +614,32 @@ set "LORA_SCALE=1.0"
 콜론을 배율 구분자로 읽고, 괄호는 배치 블록을 깨뜨린다). `lora\` 폴더는
 무결성 검사 범위 밖이라 여기에 파일을 넣어도 `verify-bundle.bat` 이 빨간불을
 띄우지 않는다.
+
+## pi-subagents 도구 스위치 (2026-10-02)
+
+`config.env` 의 `PI_SUBAGENT_TOOLS` 를 `0` 으로 두면 `start-pi.bat` 이 pi-subagents의 도구 세 개(`subagent`, `bg_wait`,
+`subagent_supervisor`)를 모델에 보내는 요청에서 뺀다. 패키지와 그 스킬·프롬프트·명령은 그대로 있고, `1` 로 되돌리고
+`start-pi.bat` 을 다시 띄우면 원래대로다. 기동할 때 `[info] pi-subagents tools: on/off` 한 줄이 나온다.
+**잠금 장치가 아니다** — 모델에 주는 도구 목록을 줄일 뿐이다.
+
+왜 있나: 이 세 도구의 정의가 매 요청의 큰 부분이다. 스테이징 PC에서 번들 pi.exe와 모의 서버로 잰 `start-pi.bat` 첫 요청은
+켰을 때 60.2k자, 껐을 때 36.6k자다. **이것은 문자 수다.** 1080 Ti 세 장에서 토큰 수와 prefill 시간이 얼마나 줄고 위임을
+못 쓰는 손해가 얼마인지는 잰 적이 없다 — 리허설 11-17이 두 설정을 같은 과제로 비교하고, 기본값(지금 `1`)은 그 뒤에 정한다.
+
+끄면 달라지는 것:
+
+- 서브에이전트 위임을 못 한다. 리허설 11-4·11-7은 해당 없음이 된다.
+- superpowers의 `subagent-driven-development`, `dispatching-parallel-agents`, `requesting-code-review` 는 스킬 글은 그대로
+  보이지만 맡길 도구가 없다. 계획 실행은 `executing-plans` 로 한 세션 안에서 한다. **같은 세션이 한 검토를 "독립 리뷰"로
+  적지 않는다.**
+- `0` 인 채로 `start-pi.bat --exclude-tools …`(또는 `-xt`)를 주면 기동을 거부한다(exit 12). Pi는 `--exclude-tools` 를 마지막
+  것만 적용해서 세 도구가 조용히 되살아나기 때문이다. 자기 제외 목록을 쓰면서 이 도구들도 빼려면 `PI_SUBAGENT_TOOLS=1` 로
+  두고 그 목록에 `subagent,bg_wait,subagent_supervisor` 를 직접 더한다. `--tools`(허용 목록)는 그대로 써도 된다.
+  이 거부는 넉넉하게 잡혀 있다: 인자 중 `--exclude-tools`/`-xt` 와 글자가 똑같은 것이 있으면 다른 옵션의 값이어도 거부한다
+  (예: `-p "--exclude-tools"`). 옵션 종료 `--` 뒤의 프롬프트는 보지 않지만, `--` 바로 앞이 `-` 로 시작하는 인자면 그 `--` 를
+  옵션 값으로 보고 계속 검사한다. 프롬프트 문장 안에 그 글자가 들어 있는 것은 상관없다.
+- 세션의 학습 데이터 스냅샷(`lora-snapshot`)은 실제 요청의 도구 목록을 적으므로, 켠 세션과 끈 세션은 서로 다른 입력으로 남는다.
+  LoRA 학습 데이터는 **한 설정으로 모은다** — 리허설 비교 때문에 설정을 뒤집어 돌린 세션은 `lora\approved.txt` 에 섞지 않는다.
 
 ## 지식그래프 스택 (LightRAG · graphify, 2026-09-22)
 
